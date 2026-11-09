@@ -3,7 +3,7 @@
  * Plugin Name:       Biscuit Security
  * Plugin URI:        https://github.com/biscuitstudios/bs-security
  * Description:       Biscuit's site security in one plugin. Sends the response security headers managed hosts and WordPress leave off, hides usernames from logged-out visitors, gives one generic login error, and switches off the theme and plugin file editor. Replaces Biscuit Security Headers.
- * Version:           0.3.0
+ * Version:           0.3.1
  * Requires at least: 6.3
  * Requires PHP:      8.2
  * Author:            Biscuit Studios
@@ -16,7 +16,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'BSSEC_VERSION',  '0.3.0' );
+define( 'BSSEC_VERSION',  '0.3.1' );
 define( 'BSSEC_FILE',     __FILE__ );
 define( 'BSSEC_DIR',      plugin_dir_path( __FILE__ ) );
 define( 'BSSEC_URL',      plugin_dir_url( __FILE__ ) );

@@ -426,11 +426,20 @@ $hardening_on = count( array_filter(
                                     printf( esc_html__( 'Last report %s ago.', 'bs-security' ), esc_html( human_time_diff( $last_ts ) ) );
                                 }
                                 if ( $ro_summary['dropped'] > 0 ) {
+                                    // "153 refused: 150 over the ... limit, 3 from browser
+                                    // extensions." A total alone cannot say which rule is
+                                    // doing the refusing, which is what 0.3.0 showed.
+                                    $drop_labels = Bssec_Csp_Reports::drop_labels();
+                                    $drop_parts  = [];
+                                    foreach ( $ro_summary['dropped_by'] as $reason => $n ) {
+                                        $drop_parts[] = (int) $n . ' ' . ( $drop_labels[ $reason ] ?? $reason );
+                                    }
                                     echo ' ';
                                     printf(
-                                        /* translators: %d: number of reports refused */
-                                        esc_html( _n( '%d report refused.', '%d reports refused.', $ro_summary['dropped'], 'bs-security' ) ),
-                                        (int) $ro_summary['dropped']
+                                        /* translators: 1: number refused, 2: comma-separated list of counts and reasons */
+                                        esc_html__( '%1$d refused: %2$s.', 'bs-security' ),
+                                        (int) $ro_summary['dropped'],
+                                        esc_html( implode( ', ', $drop_parts ) )
                                     );
                                 }
                                 ?>

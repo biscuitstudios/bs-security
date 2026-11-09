@@ -4,7 +4,7 @@ Tags: security, security headers, hardening, user enumeration, login
 Requires at least: 6.3
 Tested up to: 7.1
 Requires PHP: 8.2
-Stable tag: 0.3.0
+Stable tag: 0.3.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -28,6 +28,22 @@ Replacing Biscuit Security Headers: activate this plugin first, so it copies the
 old header settings, then deactivate and delete Biscuit Security Headers.
 
 == Changelog ==
+
+= 0.3.1 =
+* Fix: CSP reports from Chrome were mostly refused. Chrome bundles every
+  report from about the last minute into one request, and 0.3.0 kept only the
+  first ten reports of a request and refused the rest. Repeats are now folded
+  together first, so forty reports of the same blocked image are one row with
+  a count of forty, and the limit applies to ten different sources per
+  request rather than ten reports.
+* Fix: a request can now be up to 256 KB, up from 16 KB. Every report repeats
+  the whole policy, so with a real policy 16 KB held only about a dozen
+  reports and a bigger bundle was refused whole. At most 200 reports are read
+  from one request; any beyond that are refused and counted.
+* Change: the status line now says why reports were refused, largest count
+  first, for example "8 refused: 6 over the per-request limits, 1 from
+  another site, 1 too large". Refusals counted by 0.3.0 show their reasons
+  too.
 
 = 0.3.0 =
 * New: CSP report-only. A second policy, separate from the enforced one, that

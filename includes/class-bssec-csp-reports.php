@@ -42,8 +42,17 @@ class Bssec_Csp_Reports {
     public const ROUTE_PATH      = '/csp-report';
 
     // The limits, decision D in docs/NOTES.md.
-    public const MAX_BODY_BYTES    = 16384;
-    public const MAX_PER_REQUEST   = 10;
+    //
+    // MAX_BODY_BYTES was 16 KB in 0.3.0, set assuming one report per request.
+    // Chrome bundles reports, and every report repeats the whole policy: one
+    // is about 1,350 bytes with a realistic store policy, so 16 KB held about
+    // twelve and a bigger bundle was refused whole. Raised to 256 KB by Jason,
+    // November 9, 2026. PHP has read the body before this check runs anyway,
+    // so the limit bounds parsing, not reading. MAX_REPORTS_PARSED bounds the
+    // number of reports looked at in one request, however small each is.
+    public const MAX_BODY_BYTES     = 262144;
+    public const MAX_REPORTS_PARSED = 200;
+    public const MAX_PER_REQUEST    = 10;
     public const ROW_CAP           = 500;
     public const NEW_ROWS_PER_HOUR = 50;
     public const KEEP_DAYS         = 30;
@@ -77,6 +86,33 @@ class Bssec_Csp_Reports {
         'wrong_host', 'not_report', 'extension', 'unknown_directive',
         'unrecognized_source', 'over_cap', 'over_budget', 'no_table',
     ];
+
+    /**
+     * How each refusal reads on the settings screen, after "N refused:".
+     *
+     * Three reasons refuse a whole request rather than a report (too large,
+     * wrong content type, not a report at all), and say so, because a request
+     * can hold many reports and the screen cannot tell how many.
+     *
+     * @return array<string,string> reason => label
+     */
+    public static function drop_labels(): array {
+        return [
+            'too_large'           => __( 'too large (whole requests, any number of reports each)', 'bs-security' ),
+            'bad_type'            => __( 'the wrong type (whole requests)', 'bs-security' ),
+            'unparseable'         => __( 'not readable as a report (whole requests)', 'bs-security' ),
+            'not_csp'             => __( 'not CSP reports', 'bs-security' ),
+            'over_batch'          => __( 'over the per-request limits (10 sources, 200 reports)', 'bs-security' ),
+            'wrong_host'          => __( 'from another site', 'bs-security' ),
+            'not_report'          => __( 'from an enforced policy', 'bs-security' ),
+            'extension'           => __( 'from browser extensions', 'bs-security' ),
+            'unknown_directive'   => __( 'naming an unknown directive', 'bs-security' ),
+            'unrecognized_source' => __( 'with an unrecognized source', 'bs-security' ),
+            'over_cap'            => __( 'new sources with the table full', 'bs-security' ),
+            'over_budget'         => __( 'over 50 new sources in an hour', 'bs-security' ),
+            'no_table'            => __( 'with the table missing', 'bs-security' ),
+        ];
+    }
 
     public function init(): void {
         add_action( 'rest_api_init', [ $this, 'register_route' ] );
@@ -249,9 +285,20 @@ class Bssec_Csp_Reports {
             }
         }
 
-        if ( count( $raw ) > self::MAX_PER_REQUEST ) {
-            $dropped['over_batch'] = count( $raw ) - self::MAX_PER_REQUEST;
-            $raw = array_slice( $raw, 0, self::MAX_PER_REQUEST );
+        // Fold first, then limit. Chrome's Reporting API bundles every report
+        // from about the last minute, across pages, into one request, and
+        // most of a bundle is the same pair repeated: "an image from this
+        // site" once per image. 0.3.0 cut the raw list at ten before folding,
+        // so a bundle of forty lost thirty counts and could drop a genuinely
+        // new pair that happened to sit eleventh. On biscuitstudios.com that
+        // showed as 153 refused against 2 kept, November 9, 2026.
+        //
+        // Up to MAX_REPORTS_PARSED reports are parsed; any beyond that are
+        // refused unread and counted. The per-request limit then bounds what
+        // it was for, the rows written, at ten distinct pairs.
+        if ( count( $raw ) > self::MAX_REPORTS_PARSED ) {
+            $dropped['over_batch'] = ( $dropped['over_batch'] ?? 0 ) + count( $raw ) - self::MAX_REPORTS_PARSED;
+            $raw = array_slice( $raw, 0, self::MAX_REPORTS_PARSED );
         }
 
         $rows = [];
@@ -259,9 +306,30 @@ class Bssec_Csp_Reports {
             $out = self::normalize_report( $r, $site_host );
             if ( isset( $out['drop'] ) ) {
                 $dropped[ $out['drop'] ] = ( $dropped[ $out['drop'] ] ?? 0 ) + 1;
-            } else {
-                $rows[] = $out['row'];
+                continue;
             }
+            $row = $out['row'];
+            $key = $row['report_key'];
+            if ( ! isset( $rows[ $key ] ) ) {
+                $rows[ $key ] = $row;
+                continue;
+            }
+            // A repeat: count it, and keep the latest sample page and the
+            // latest source that was actually given.
+            $rows[ $key ]['hits']++;
+            $rows[ $key ]['sample_page'] = $row['sample_page'];
+            if ( '' !== $row['sample_source'] ) {
+                $rows[ $key ]['sample_source'] = $row['sample_source'];
+            }
+        }
+        $rows = array_values( $rows );
+
+        if ( count( $rows ) > self::MAX_PER_REQUEST ) {
+            // Counted in reports, not pairs, so the refusal total means the
+            // same thing whatever the reason.
+            $over = array_slice( $rows, self::MAX_PER_REQUEST );
+            $dropped['over_batch'] = ( $dropped['over_batch'] ?? 0 ) + array_sum( array_column( $over, 'hits' ) );
+            $rows = array_slice( $rows, 0, self::MAX_PER_REQUEST );
         }
 
         return [ 'rows' => $rows, 'dropped' => $dropped ];
@@ -313,6 +381,7 @@ class Bssec_Csp_Reports {
             'blocked'       => $blocked,
             'sample_page'   => $page,
             'sample_source' => self::origin_of( $str( $r['source'] ?? '' ) ),
+            'hits'          => 1,
         ] ];
     }
 
@@ -516,17 +585,20 @@ class Bssec_Csp_Reports {
         $decision = self::decide( $exists, $rows, $recent );
         if ( 'update' !== $decision && 'insert' !== $decision ) return $decision;
 
+        // A folded row carries how many reports it stands for; still one write.
+        $hits = max( 1, (int) ( $row['hits'] ?? 1 ) );
+
         $wpdb->query( $wpdb->prepare(
             "INSERT INTO $table
                 (report_key, directive, blocked, sample_page, sample_source, hits, first_seen, last_seen)
-             VALUES (%s, %s, %s, %s, %s, 1, %s, %s)
+             VALUES (%s, %s, %s, %s, %s, %d, %s, %s)
              ON DUPLICATE KEY UPDATE
-                hits = hits + 1,
+                hits = hits + %d,
                 last_seen = %s,
                 sample_page = %s,
                 sample_source = IF(%s = '', sample_source, %s)",
-            $row['report_key'], $row['directive'], $row['blocked'], $row['sample_page'], $row['sample_source'], $ts, $ts,
-            $ts, $row['sample_page'], $row['sample_source'], $row['sample_source']
+            $row['report_key'], $row['directive'], $row['blocked'], $row['sample_page'], $row['sample_source'], $hits, $ts, $ts,
+            $hits, $ts, $row['sample_page'], $row['sample_source'], $row['sample_source']
         ) );
 
         return 'update' === $decision ? 'updated' : 'inserted';
@@ -557,20 +629,27 @@ class Bssec_Csp_Reports {
      * from a row count alone, so this also says whether the table exists and
      * how much has been refused.
      *
-     * @return array{table: bool, rows: int, last: string, dropped: int, since: string}
+     * `dropped_by` is reason => count, largest first, known reasons only.
+     *
+     * @return array{table: bool, rows: int, last: string, dropped: int, dropped_by: array<string,int>, since: string}
      */
     public static function summary(): array {
         global $wpdb;
-        $out = [ 'table' => false, 'rows' => 0, 'last' => '', 'dropped' => 0, 'since' => '' ];
+        $out = [ 'table' => false, 'rows' => 0, 'last' => '', 'dropped' => 0, 'dropped_by' => [], 'since' => '' ];
         if ( ! self::table_exists() ) return $out;
 
-        $table          = self::table();
-        $stats          = self::stats();
-        $out['table']   = true;
-        $out['rows']    = (int) $wpdb->get_var( "SELECT COUNT(*) FROM $table" );
-        $out['last']    = (string) $wpdb->get_var( "SELECT MAX(last_seen) FROM $table" );
-        $out['dropped'] = array_sum( array_map( 'intval', $stats['dropped'] ) );
-        $out['since']   = $stats['since'];
+        $table = self::table();
+        $stats = self::stats();
+
+        $by = array_filter( array_map( 'intval', array_intersect_key( $stats['dropped'], array_flip( self::DROP_REASONS ) ) ) );
+        arsort( $by );
+
+        $out['table']      = true;
+        $out['rows']       = (int) $wpdb->get_var( "SELECT COUNT(*) FROM $table" );
+        $out['last']       = (string) $wpdb->get_var( "SELECT MAX(last_seen) FROM $table" );
+        $out['dropped']    = array_sum( $by );
+        $out['dropped_by'] = $by;
+        $out['since']      = $stats['since'];
         return $out;
     }
 

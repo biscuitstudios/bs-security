@@ -303,7 +303,8 @@ $ro     = array_merge( Bssec_Plugin::defaults(), [
 
 $GLOBALS['wpdb']->rows = 7;
 $GLOBALS['wpdb']->last = gmdate( 'Y-m-d H:i:s', time() - 300 );
-$GLOBALS['options']['bssec_csp_stats'] = [ 'since' => '2026-11-09 12:00:00', 'dropped' => [ 'wrong_host' => 2, 'over_budget' => 1 ] ];
+// Smaller count first on purpose, so the "largest first" check below can fail.
+$GLOBALS['options']['bssec_csp_stats'] = [ 'since' => '2026-11-09 12:00:00', 'dropped' => [ 'over_budget' => 1, 'wrong_host' => 2, 'not_a_reason' => 9 ] ];
 
 $h_ro = '';
 try {
@@ -319,7 +320,8 @@ it( 'collecting: the status names the end date in words',
     false !== strpos( $card, 'Collecting until ' . ( new DateTimeImmutable( $future ) )->format( 'F j, Y' ) ) );
 it( 'collecting: the row count is shown', false !== strpos( $card, '7 sources reported so far.' ) );
 it( 'collecting: the last report time is shown', false !== strpos( $card, 'Last report 2 minutes ago.' ) );
-it( 'collecting: refusals are added up and shown', false !== strpos( $card, '3 reports refused.' ) );
+it( 'collecting: refusals are added up and broken down by reason, largest first',
+    false !== strpos( $card, '3 refused: 2 from another site, 1 over 50 new sources in an hour.' ) );
 it( 'collecting: the report address is shown',
     false !== strpos( $card, 'https://example.test/wp-json/bssec/v1/csp-report' ) );
 $pre_ro = preview_block( $h_ro );

@@ -57,9 +57,10 @@ traffic, the real policy is written from that list.
   WooCommerce order numbers in paths become `{n}`. No IP address and no user
   agent.
 - **The report address is public, by necessity.** Browsers send reports with no
-  login. It refuses bodies over 16 KB, takes at most 10 reports per request,
-  adds at most 50 new rows an hour and 500 in all, and counts everything it
-  refuses. A known row always keeps counting, so junk cannot push a real row
+  login. It refuses requests over 256 KB, reads at most 200 reports from one
+  request, folds repeats together, writes at most 10 different sources per
+  request, adds at most 50 new rows an hour and 500 in all, and counts
+  everything it refuses, by reason. A known row always keeps counting, so junk cannot push a real row
   out. Because anyone can send a report, a site seen once is not evidence that
   it belongs in the policy.
 - **While it is switched on**, the plugin has a database table, a daily

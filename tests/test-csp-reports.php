@@ -231,9 +231,59 @@ it( 'a legacy body sent as the batch type is refused',
 
 echo "\n== the batch limit ==\n";
 $big = parse( json_encode( array_map( fn( $i ) => item( [ 'blockedURL' => "https://h$i.example/" ] ), range( 1, 14 ) ) ), BATCH );
-it( 'at most ten reports from one request', Bssec_Csp_Reports::MAX_PER_REQUEST === count( $big['rows'] ) );
+it( 'at most ten sources from one request', Bssec_Csp_Reports::MAX_PER_REQUEST === count( $big['rows'] ) );
 it( 'the other four are counted as over_batch', 4 === ( $big['dropped']['over_batch'] ?? 0 ) );
 it( 'and they are the last four, not a random four', 'https://h10.example' === end( $big['rows'] )['blocked'] );
+
+echo "\n== repeats fold before the limit (0.3.1) ==\n";
+// The bundle Chrome sends: one report per image, nearly all the same pair.
+// On biscuitstudios.com, 0.3.0 refused 153 against 2 kept.
+$same = parse( json_encode( array_map(
+    fn( $i ) => item( [ 'documentURL' => "https://shop.test/page-$i/", 'blockedURL' => "https://shop.test/img/$i.jpg" ] ),
+    range( 1, 40 )
+) ), BATCH );
+it( 'forty reports of one pair are one row', 1 === count( $same['rows'] ) );
+it( 'carrying all forty in its count', 40 === ( $same['rows'][0]['hits'] ?? 0 ) );
+it( 'with nothing refused', [] === $same['dropped'] );
+it( 'and the latest page as its sample', 'https://shop.test/page-40/' === $same['rows'][0]['sample_page'] );
+
+$mixed = [];
+foreach ( range( 1, 3 ) as $round ) {
+    foreach ( range( 1, 12 ) as $i ) {
+        $mixed[] = item( [ 'blockedURL' => "https://h$i.example/x-$round.png" ] );
+    }
+}
+$m = parse( json_encode( $mixed ), BATCH );
+it( 'twelve pairs, each three times, interleaved: ten rows kept', 10 === count( $m['rows'] ) );
+it( 'each kept row counts all three of its reports',
+    [ 3 ] === array_values( array_unique( array_column( $m['rows'], 'hits' ) ) ) );
+it( 'the two pairs over the limit count as six refused reports, not two',
+    6 === ( $m['dropped']['over_batch'] ?? 0 ) );
+it( 'the kept ten are the first ten seen',
+    'https://h1.example' === $m['rows'][0]['blocked'] && 'https://h10.example' === $m['rows'][9]['blocked'] );
+
+$src = parse( json_encode( [
+    item( [ 'sourceFile' => 'https://shop.test/a.js' ] ),
+    item( [] ),
+] ), BATCH );
+it( 'a later repeat with no source does not blank the source already seen',
+    'https://shop.test' === $src['rows'][0]['sample_source'] && 2 === $src['rows'][0]['hits'] );
+
+$ext = parse( json_encode( array_merge(
+    array_map( fn( $i ) => item( [ 'blockedURL' => "chrome-extension://abc/$i.js" ] ), range( 1, 5 ) ),
+    [ item( [] ) ]
+) ), BATCH );
+it( 'refusals are still counted per report, folded or not',
+    5 === ( $ext['dropped']['extension'] ?? 0 ) && 1 === count( $ext['rows'] ) );
+it( 'a single legacy report is one row with a count of one',
+    1 === ( parse( legacy( [] ) )['rows'][0]['hits'] ?? 0 ) );
+
+echo "\n== every refusal has words on the screen ==\n";
+$labels = Bssec_Csp_Reports::drop_labels();
+it( 'every drop reason has a label',
+    [] === array_diff( Bssec_Csp_Reports::DROP_REASONS, array_keys( $labels ) ) );
+it( 'and no label is for a reason that does not exist',
+    [] === array_diff( array_keys( $labels ), Bssec_Csp_Reports::DROP_REASONS ) );
 
 // --- the blocked column -----------------------------------------------------------
 
@@ -279,7 +329,38 @@ it( 'every refusal decide() can return is a counted drop reason',
     in_array( 'over_cap', Bssec_Csp_Reports::DROP_REASONS, true ) && in_array( 'over_budget', Bssec_Csp_Reports::DROP_REASONS, true ) );
 it( 'the numbers are the ones Jason approved',
     500 === $cap && 50 === $budget && 30 === Bssec_Csp_Reports::KEEP_DAYS
-    && 16384 === Bssec_Csp_Reports::MAX_BODY_BYTES && 10 === Bssec_Csp_Reports::MAX_PER_REQUEST );
+    && 262144 === Bssec_Csp_Reports::MAX_BODY_BYTES && 10 === Bssec_Csp_Reports::MAX_PER_REQUEST
+    && 200 === Bssec_Csp_Reports::MAX_REPORTS_PARSED );
+
+echo "\n== the request size limit fits a real Chrome bundle (0.3.1) ==\n";
+// 16 KB in 0.3.0 refused a 40-report bundle whole on Local's MySQL. Build a
+// bundle the way Chrome does, with a realistic store policy repeated in every
+// report and a real user agent, and check it fits.
+$policy = "default-src 'self'; script-src 'self' 'unsafe-inline' https://use.typekit.net https://www.googletagmanager.com https://js.stripe.com; style-src 'self' 'unsafe-inline' https://use.typekit.net https://p.typekit.net; img-src 'self' data: https://images.printify.com; font-src 'self' https://use.typekit.net; frame-src https://js.stripe.com https://forceblue.givecloud.co; connect-src 'self' https://api.stripe.com; report-uri https://shop.test/wp-json/bssec/v1/csp-report; report-to bssec";
+$chrome = json_encode( array_map( fn( $i ) => array_merge( item( [
+    'blockedURL'     => "https://cdn.example.com/wp-content/uploads/2026/10/product-photo-$i-1536x1024.jpg",
+    'documentURL'    => "https://shop.test/product/force-blue-logo-tee-black-$i/",
+    'originalPolicy' => $policy,
+    'referrer'       => 'https://shop.test/shop/',
+    'sample'         => '',
+    'lineNumber'     => 0,
+    'columnNumber'   => 0,
+] ), [ 'user_agent' => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36' ] ), range( 1, 100 ) ) );
+it( 'a 100-report bundle with a realistic policy is over the old 16 KB', strlen( $chrome ) > 16384 );
+it( 'and inside the new limit', strlen( $chrome ) <= Bssec_Csp_Reports::MAX_BODY_BYTES );
+it( 'and parses to one folded row of 100',
+    ( fn( $p ) => 1 === count( $p['rows'] ) && 100 === $p['rows'][0]['hits'] && [] === $p['dropped'] )( parse( $chrome, BATCH ) ) );
+
+echo "\n== at most 200 reports are parsed from one request ==\n";
+$flood = parse( json_encode( array_map( fn( $i ) => item( [] ), range( 1, 250 ) ) ), BATCH );
+it( 'the first 200 are parsed and folded', 200 === ( $flood['rows'][0]['hits'] ?? 0 ) );
+it( 'the other 50 are refused unread and counted', 50 === ( $flood['dropped']['over_batch'] ?? 0 ) );
+$flood_mixed = parse( json_encode( array_merge(
+    array_map( fn( $i ) => item( [] ), range( 1, 205 ) ),
+    array_map( fn( $i ) => item( [ 'blockedURL' => "https://late-$i.example/" ] ), range( 1, 3 ) )
+) ), BATCH );
+it( 'a new source past the 200th report is not stored',
+    1 === count( $flood_mixed['rows'] ) && 8 === ( $flood_mixed['dropped']['over_batch'] ?? 0 ) );
 
 echo "\n" . ( $fails
     ? "$fails of $ran checks FAILED\n"
