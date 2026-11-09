@@ -47,6 +47,32 @@ function wp_nonce_url( $u, $a )       { return $u . '&_wpnonce=stub'; }
 function checked( $a, $b = true, $e = true )  { $r = ( $a == $b ) ? ' checked' : ''; if ( $e ) echo $r; return $r; }
 function selected( $a, $b = true, $e = true ) { $r = ( $a == $b ) ? ' selected' : ''; if ( $e ) echo $r; return $r; }
 function get_transient( $k )          { return $GLOBALS['transients'][ $k ] ?? false; }
+function get_option( $k, $d = false ) { return $GLOBALS['options'][ $k ] ?? $d; }
+function rest_url( $p = '' )          { return 'https://example.test/wp-json/' . ltrim( $p, '/' ); }
+function wp_timezone()                { return new DateTimeZone( 'America/New_York' ); }
+
+/**
+ * Just enough $wpdb for Bssec_Csp_Reports::summary() to run. It answers the
+ * three queries that method makes from canned values; it proves the view
+ * renders each state, not that the SQL is right. The SQL was run against
+ * Local's MySQL (docs/NOTES.md, "Build order", step 2).
+ */
+class Fake_Wpdb {
+    public $prefix = 'wp_';
+    public $table  = true;
+    public $rows   = 0;
+    public $last   = null;
+    public function esc_like( $t ) { return $t; }
+    public function prepare( $q, ...$a ) { return vsprintf( str_replace( '%s', "'%s'", $q ), $a ); }
+    public function get_var( $q ) {
+        if ( 0 === strpos( $q, 'SHOW TABLES' ) ) return $this->table ? 'wp_bssec_csp_reports' : null;
+        if ( false !== strpos( $q, 'COUNT(*)' ) )  return (string) $this->rows;
+        if ( false !== strpos( $q, 'MAX(last_seen)' ) ) return $this->last;
+        throw new RuntimeException( "Fake_Wpdb was asked something it does not know: $q" );
+    }
+}
+$GLOBALS['wpdb']    = new Fake_Wpdb();
+$GLOBALS['options'] = [];
 
 function add_query_arg( $args, $url = '' ) {
     if ( ! is_array( $args ) ) { $args = [ $args => func_get_arg( 1 ) ]; $url = func_get_arg( 2 ) ?? ''; }
@@ -58,6 +84,7 @@ $GLOBALS['transients'] = [];
 require_once __DIR__ . '/../includes/class-bssec-plugin.php';
 require_once __DIR__ . '/../includes/class-bssec-headers.php';
 require_once __DIR__ . '/../includes/class-bssec-server-check.php';
+require_once __DIR__ . '/../includes/class-bssec-csp-reports.php';
 require_once __DIR__ . '/../includes/trait-bssec-guards.php';
 require_once __DIR__ . '/../admin/class-bssec-admin.php';
 
@@ -115,6 +142,7 @@ foreach ( [
     'permissions_policy_block[]', 'frame_options', 'frame_options_value',
     'content_type_options', 'hsts', 'hsts_max_age', 'csp', 'csp_value',
     'block_user_enumeration', 'redirect_author_archives', 'mask_login_errors', 'disable_file_editor',
+    'csp_report_only', 'csp_report_only_value', 'csp_report_only_until',
 ] as $field ) {
     it( "$field has an input", false !== strpos( $html, 'name="' . $field . '"' ) );
 }
@@ -244,7 +272,93 @@ $xss = array_merge( Bssec_Plugin::defaults(), [
 ] );
 $html3 = render( $xss );
 it( 'no live script tag reaches the page', false === strpos( $html3, '<script>alert(1)' ) );
-it( 'no textarea is closed early',         false === strpos( $html3, '"></textarea>' ) );
+// This used to search the whole page for the literal "></textarea>, which an
+// empty textarea after a quoted attribute also prints. The report-only box
+// made that false positive real, November 9, 2026. Check what it means: every
+// textarea closes exactly once, and the payload sits inside one, escaped.
+it( 'no textarea is closed early',
+    substr_count( $html3, '<textarea' ) === substr_count( $html3, '</textarea>' )
+    && false !== strpos( $html3, '&quot;&gt;&lt;/textarea&gt;&lt;script&gt;alert(1)' ) );
+
+echo "\n== CSP report-only ==\n";
+
+/** Just the report-only card, so a phrase elsewhere on the page cannot pass a check. */
+function report_only_card( string $html ): string {
+    return preg_match( '#<div class="bssec-card" id="bssec-report-only">(.*?)<div class="bssec-actions">#s', $html, $m ) ? $m[1] : '';
+}
+
+it( 'off by default: the options start hidden',
+    (bool) preg_match( '/id="bssec-report-only-opts"[^>]*hidden/', $html ) );
+it( 'off by default: no status line',
+    false === strpos( report_only_card( $html ), 'bssec-report-only-status' ) );
+it( 'the card was found, so the check above is real', '' !== report_only_card( $html ) );
+
+$future = ( new DateTimeImmutable( '+10 days', wp_timezone() ) )->format( 'Y-m-d' );
+$past   = ( new DateTimeImmutable( '-3 days', wp_timezone() ) )->format( 'Y-m-d' );
+$ro     = array_merge( Bssec_Plugin::defaults(), [
+    'csp_report_only'       => true,
+    'csp_report_only_value' => "img-src 'self'",
+    'csp_report_only_until' => $future,
+] );
+
+$GLOBALS['wpdb']->rows = 7;
+$GLOBALS['wpdb']->last = gmdate( 'Y-m-d H:i:s', time() - 300 );
+$GLOBALS['options']['bssec_csp_stats'] = [ 'since' => '2026-11-09 12:00:00', 'dropped' => [ 'wrong_host' => 2, 'over_budget' => 1 ] ];
+
+$h_ro = '';
+try {
+    $h_ro = render( $ro );
+    it( 'collecting: no fatal, no notice, no warning', true );
+} catch ( Throwable $e ) {
+    it( 'collecting: no fatal, no notice, no warning: ' . $e->getMessage(), false );
+}
+$card = report_only_card( $h_ro );
+it( 'collecting: the options are visible', ! preg_match( '/id="bssec-report-only-opts"[^>]*hidden/', $h_ro ) );
+it( 'collecting: the end date is in the date field', false !== strpos( $card, 'value="' . $future . '"' ) );
+it( 'collecting: the status names the end date in words',
+    false !== strpos( $card, 'Collecting until ' . ( new DateTimeImmutable( $future ) )->format( 'F j, Y' ) ) );
+it( 'collecting: the row count is shown', false !== strpos( $card, '7 sources reported so far.' ) );
+it( 'collecting: the last report time is shown', false !== strpos( $card, 'Last report 2 minutes ago.' ) );
+it( 'collecting: refusals are added up and shown', false !== strpos( $card, '3 reports refused.' ) );
+it( 'collecting: the report address is shown',
+    false !== strpos( $card, 'https://example.test/wp-json/bssec/v1/csp-report' ) );
+$pre_ro = preview_block( $h_ro );
+it( 'collecting: the preview shows the report-only header with our address',
+    false !== strpos( $pre_ro, 'Content-Security-Policy-Report-Only: img-src &#039;self&#039;; report-uri https://example.test/wp-json/bssec/v1/csp-report; report-to bssec' ) );
+it( 'collecting: the preview shows Reporting-Endpoints',
+    false !== strpos( $pre_ro, 'Reporting-Endpoints: bssec=&quot;https://example.test/wp-json/bssec/v1/csp-report&quot;' ) );
+
+$GLOBALS['wpdb']->rows = 0;
+$GLOBALS['wpdb']->last = null;
+$GLOBALS['options']    = [];
+$card0 = report_only_card( render( $ro ) );
+it( 'no reports yet: says so', false !== strpos( $card0, '0 sources reported so far. No reports yet.' ) );
+it( 'no reports yet: no refusal line', false === strpos( $card0, 'refused' ) );
+
+$GLOBALS['wpdb']->table = false;
+$cardm = report_only_card( render( $ro ) );
+it( 'table missing: says nothing is being stored', false !== strpos( $cardm, 'The reports table is missing' ) );
+it( 'table missing: no row count pretending to be zero', false === strpos( $cardm, 'sources reported' ) );
+$GLOBALS['wpdb']->table = true;
+
+$ended = array_merge( $ro, [ 'csp_report_only_until' => $past ] );
+$h_end = render( $ended );
+it( 'ended: the status says so and how to restart',
+    false !== strpos( report_only_card( $h_end ), 'Collection ended on ' . ( new DateTimeImmutable( $past ) )->format( 'F j, Y' ) . '. Save with a later date to start again.' ) );
+it( 'ended: no report address offered', false === strpos( report_only_card( $h_end ), 'Reports go to' ) );
+it( 'ended: the preview sends no report-only header',
+    false === strpos( preview_block( $h_end ), 'Report-Only' ) );
+
+$h_ro_xss = render( array_merge( $ro, [ 'csp_report_only_value' => '"></textarea><script>alert(2)</script>' ] ) );
+it( 'a candidate carrying markup cannot escape its textarea',
+    false === strpos( $h_ro_xss, '<script>alert(2)' )
+    && substr_count( $h_ro_xss, '<textarea' ) === substr_count( $h_ro_xss, '</textarea>' )
+    && false !== strpos( $h_ro_xss, '&quot;&gt;&lt;/textarea&gt;&lt;script&gt;alert(2)' ) );
+
+$_GET['bssec-notice'] = 'noreportonly';
+it( 'the empty-candidate notice renders',
+    false !== strpos( render( Bssec_Plugin::defaults() ), 'Report-only was left off' ) );
+unset( $_GET['bssec-notice'] );
 
 echo "\n== the local development warning ==\n";
 

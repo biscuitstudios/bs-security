@@ -160,10 +160,62 @@ it( 'the poisoned frame value fell back rather than shipping',
 it( 'the poisoned feature token was dropped, the clean one kept',
     'microphone=()' === $sent['Permissions-Policy'] );
 
+// --- CSP report-only -------------------------------------------------------
+
+echo "\n== report-only settings ==\n";
+$today = new DateTimeImmutable( '2026-11-09 09:00:00', new DateTimeZone( 'America/New_York' ) );
+$ro    = fn( array $raw ) => Bssec_Plugin::sanitize( $raw, $today );
+
+it( 'an empty POST leaves report-only off', false === $empty['csp_report_only'] );
+it( 'and stores no end date',               '' === $empty['csp_report_only_until'] );
+
+it( 'switched on with no date: ends 30 days out',
+    '2026-12-09' === $ro( [ 'csp_report_only' => '1' ] )['csp_report_only_until'] );
+it( 'a real future date is kept',
+    '2027-01-15' === $ro( [ 'csp_report_only' => '1', 'csp_report_only_until' => '2027-01-15' ] )['csp_report_only_until'] );
+it( 'today is kept (the end date is inclusive)',
+    '2026-11-09' === $ro( [ 'csp_report_only' => '1', 'csp_report_only_until' => '2026-11-09' ] )['csp_report_only_until'] );
+it( 'a past date renews to 30 days out rather than saving an ended window',
+    '2026-12-09' === $ro( [ 'csp_report_only' => '1', 'csp_report_only_until' => '2026-11-08' ] )['csp_report_only_until'] );
+it( 'an impossible date (February 31) is refused, not rolled into March',
+    '2026-12-09' === $ro( [ 'csp_report_only' => '1', 'csp_report_only_until' => '2027-02-31' ] )['csp_report_only_until'] );
+it( 'an American-format date is refused',
+    '2026-12-09' === $ro( [ 'csp_report_only' => '1', 'csp_report_only_until' => '01/15/2027' ] )['csp_report_only_until'] );
+it( 'a date carrying a header separator is refused',
+    '2026-12-09' === $ro( [ 'csp_report_only' => '1', 'csp_report_only_until' => "2027-01-15\r\nX-Evil: 1" ] )['csp_report_only_until'] );
+it( 'switched off, a posted date is dropped',
+    '' === $ro( [ 'csp_report_only_until' => '2027-01-15' ] )['csp_report_only_until'] );
+it( 'switched off, the candidate is still kept, so it is not lost while paused',
+    "img-src 'self'" === $ro( [ 'csp_report_only_value' => "img-src 'self'" ] )['csp_report_only_value'] );
+it( 'the candidate gets the same cleaning as the enforced CSP',
+    "default-src 'self'; img-src data:" === $ro( [ 'csp_report_only_value' => "default-src 'self';\n<img-src> data:" ] )['csp_report_only_value'] );
+it( 'the candidate and the enforced policy are stored separately',
+    ( fn( $s ) => "a" === $s['csp_value'] && "b" === $s['csp_report_only_value'] )(
+        $ro( [ 'csp_value' => 'a', 'csp_report_only_value' => 'b' ] ) ) );
+it( 'a fresh window, saved, is running today',
+    Bssec_Plugin::report_only_active( $ro( [ 'csp_report_only' => '1', 'csp_report_only_value' => "img-src 'self'" ] ), $today ) );
+
+echo "\n== report-only through both layers ==\n";
+$ro_hostile = $ro( [
+    'csp_report_only'       => '1',
+    'csp_report_only_value' => "default-src 'self'\r\nSet-Cookie: a=1; report-uri https://evil.test\0",
+] );
+$ro_sent = Bssec_Headers::build( $ro_hostile, true, Bssec_Headers::CONTEXT_FRONTEND, 'https://x.test/wp-json/bssec/v1/csp-report' );
+it( 'the hostile candidate still produces a report-only header',
+    isset( $ro_sent['Content-Security-Policy-Report-Only'] ) );
+it( 'with no CR, LF or NUL in it',
+    ! preg_match( '/[\r\n\0]/', $ro_sent['Content-Security-Policy-Report-Only'] ) );
+it( 'and no trace of the pasted report address',
+    false === strpos( $ro_sent['Content-Security-Policy-Report-Only'], 'evil' ) );
+
 echo "\n== sanitize() is idempotent ==\n";
 $once  = clean( [ 'csp' => '1', 'csp_value' => "a\nb", 'permissions_policy_block' => [ 'payment', 'camera' ] ] );
 $twice = clean( $once );
 it( 'running it over its own output changes nothing', $once === $twice );
+
+$ro_once  = $ro( [ 'csp_report_only' => '1', 'csp_report_only_value' => "a\nb", 'csp_report_only_until' => '2027-01-15' ] );
+$ro_twice = $ro( $ro_once );
+it( 'nor with report-only on and a date set', $ro_once === $ro_twice );
 
 echo "\n" . ( $fails
     ? "$fails of $ran checks FAILED\n"

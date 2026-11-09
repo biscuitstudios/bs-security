@@ -143,6 +143,14 @@ class Bssec_Admin {
             $notices[]       = 'nocsp';
         }
 
+        // Same rule for report-only. Its end date is left as sanitize() set
+        // it; with the switch off, the next save clears it anyway.
+        if ( $settings['csp_report_only'] && '' === $settings['csp_report_only_value'] ) {
+            $settings['csp_report_only']       = false;
+            $settings['csp_report_only_until'] = '';
+            $notices[]                         = 'noreportonly';
+        }
+
         Bssec_Plugin::save( $settings );
 
         // The parked probe describes the site as it was a moment ago. Showing

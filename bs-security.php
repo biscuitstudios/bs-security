@@ -3,7 +3,7 @@
  * Plugin Name:       Biscuit Security
  * Plugin URI:        https://github.com/biscuitstudios/bs-security
  * Description:       Biscuit's site security in one plugin. Sends the response security headers managed hosts and WordPress leave off, hides usernames from logged-out visitors, gives one generic login error, and switches off the theme and plugin file editor. Replaces Biscuit Security Headers.
- * Version:           0.2.0
+ * Version:           0.3.0
  * Requires at least: 6.3
  * Requires PHP:      8.2
  * Author:            Biscuit Studios
@@ -16,7 +16,7 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-define( 'BSSEC_VERSION',  '0.2.0' );
+define( 'BSSEC_VERSION',  '0.3.0' );
 define( 'BSSEC_FILE',     __FILE__ );
 define( 'BSSEC_DIR',      plugin_dir_path( __FILE__ ) );
 define( 'BSSEC_URL',      plugin_dir_url( __FILE__ ) );
@@ -49,6 +49,11 @@ add_action( 'plugins_loaded', function () {
     // Hardening hooks REST, login, front-end template redirects and
     // capabilities, so it also has to run in every context, not only admin.
     ( new Bssec_Hardening() )->init();
+
+    // CSP report-only collection. REST and WP-Cron, so it runs outside
+    // is_admin() too. Adds hooks only; the route, table and cron event exist
+    // only while report-only is switched on.
+    ( new Bssec_Csp_Reports() )->init();
 
     if ( is_admin() ) {
         ( new Bssec_Admin() )->init();

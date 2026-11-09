@@ -55,8 +55,8 @@ function all_on( array $overrides = [] ): array {
     ], $overrides );
 }
 
-function build( array $settings, bool $https = true, string $context = Bssec_Headers::CONTEXT_FRONTEND ): array {
-    return Bssec_Headers::build( $settings, $https, $context );
+function build( array $settings, bool $https = true, string $context = Bssec_Headers::CONTEXT_FRONTEND, string $report_url = '' ): array {
+    return Bssec_Headers::build( $settings, $https, $context, $report_url );
 }
 
 // --- the out-of-the-box set ------------------------------------------------
@@ -218,6 +218,186 @@ it( 'every risky feature is one the UI offers',
     [] === array_diff( array_keys( Bssec_Plugin::risky_features() ), Bssec_Plugin::POLICY_FEATURES ) );
 it( 'no dead directive is offered',
     ! in_array( 'interest-cohort', Bssec_Plugin::POLICY_FEATURES, true ) );
+
+// --- CSP report-only -------------------------------------------------------
+//
+// What is pinned: the candidate goes out only on the front end and only when
+// the caller hands over a report address; it never replaces or alters the
+// enforced policy; a reporting directive pasted into the candidate cannot
+// redirect this site's reports; and the address cannot break either header.
+
+const REPORT_URL = 'https://biscuit.test/wp-json/bssec/v1/csp-report';
+
+function report_only( array $overrides = [] ): array {
+    return all_on( array_merge( [
+        'csp_report_only'       => true,
+        'csp_report_only_value' => "default-src 'self'; img-src 'self'",
+        'csp_report_only_until' => '2026-12-09',
+    ], $overrides ) );
+}
+
+echo "\n== report-only: what goes out ==\n";
+$r = build( report_only(), true, Bssec_Headers::CONTEXT_FRONTEND, REPORT_URL );
+it( 'off out of the box',
+    ! isset( $d['Content-Security-Policy-Report-Only'] ) && ! isset( $d['Reporting-Endpoints'] ) );
+it( 'the candidate goes out with both reporting directives appended',
+    "default-src 'self'; img-src 'self'; report-uri " . REPORT_URL . '; report-to bssec'
+    === ( $r['Content-Security-Policy-Report-Only'] ?? '' ) );
+it( 'Reporting-Endpoints names the same group and address',
+    'bssec="' . REPORT_URL . '"' === ( $r['Reporting-Endpoints'] ?? '' ) );
+it( 'the enforced CSP still goes out, unchanged, beside it',
+    "default-src 'self'" === ( $r['Content-Security-Policy'] ?? '' ) );
+it( 'report-only does not need the enforced CSP switched on',
+    isset( build( report_only( [ 'csp' => false ] ), true, Bssec_Headers::CONTEXT_FRONTEND, REPORT_URL )['Content-Security-Policy-Report-Only'] ) );
+it( 'and switching it on adds nothing to the enforced CSP',
+    false === strpos( $r['Content-Security-Policy'], 'report' ) );
+
+echo "\n== report-only: when it stays off ==\n";
+it( 'no report address from the caller means no header (collection ended)',
+    ! isset( build( report_only(), true )['Content-Security-Policy-Report-Only'] ) );
+it( 'and no Reporting-Endpoints either',
+    ! isset( build( report_only(), true )['Reporting-Endpoints'] ) );
+it( 'switched off, an address alone sends nothing',
+    ! isset( build( report_only( [ 'csp_report_only' => false ] ), true, Bssec_Headers::CONTEXT_FRONTEND, REPORT_URL )['Content-Security-Policy-Report-Only'] ) );
+it( 'an empty candidate sends nothing',
+    ! isset( build( report_only( [ 'csp_report_only_value' => '  ' ] ), true, Bssec_Headers::CONTEXT_FRONTEND, REPORT_URL )['Content-Security-Policy-Report-Only'] ) );
+it( 'a candidate that was only reporting directives sends nothing',
+    ! isset( build( report_only( [ 'csp_report_only_value' => 'report-uri https://x.test/; report-to x' ] ), true, Bssec_Headers::CONTEXT_FRONTEND, REPORT_URL )['Content-Security-Policy-Report-Only'] ) );
+it( 'plain HTTP does not stop it (unlike HSTS)',
+    isset( build( report_only(), false, Bssec_Headers::CONTEXT_FRONTEND, REPORT_URL )['Content-Security-Policy-Report-Only'] ) );
+
+echo "\n== report-only: context rules ==\n";
+$ra = build( report_only(), true, Bssec_Headers::CONTEXT_ADMIN, REPORT_URL );
+it( 'NEVER in admin, even handed an address',
+    ! isset( $ra['Content-Security-Policy-Report-Only'] ) && ! isset( $ra['Reporting-Endpoints'] ) );
+$rp = build( report_only(), true, Bssec_Headers::CONTEXT_PREVIEW, REPORT_URL );
+it( 'never in the Customizer preview',
+    ! isset( $rp['Content-Security-Policy-Report-Only'] ) && ! isset( $rp['Reporting-Endpoints'] ) );
+
+echo "\n== report-only: a pasted reporting directive cannot redirect reports ==\n";
+$hijack = build( report_only( [
+    'csp_report_only_value' => "default-src 'self'; report-uri https://evil.test/r; REPORT-TO evil; img-src 'self'",
+] ), true, Bssec_Headers::CONTEXT_FRONTEND, REPORT_URL );
+it( 'the pasted address is gone',
+    false === strpos( $hijack['Content-Security-Policy-Report-Only'], 'evil' ) );
+it( 'exactly one report-uri and one report-to remain, ours',
+    1 === substr_count( $hijack['Content-Security-Policy-Report-Only'], 'report-uri' )
+    && 1 === substr_count( strtolower( $hijack['Content-Security-Policy-Report-Only'] ), 'report-to' ) );
+it( 'the directives around it survive in order',
+    0 === strpos( $hijack['Content-Security-Policy-Report-Only'], "default-src 'self'; img-src 'self'; report-uri " ) );
+
+it( 'strip: uppercase directive names go',
+    "a b" === Bssec_Headers::strip_reporting_directives( "a b; REPORT-URI https://x.test" ) );
+it( 'strip: doubled and trailing semicolons collapse',
+    "a; b" === Bssec_Headers::strip_reporting_directives( "a;; b ;" ) );
+it( 'strip: a directive merely starting with the name is kept',
+    "report-urix y" === Bssec_Headers::strip_reporting_directives( "report-urix y" ) );
+it( 'strip: a policy with no reporting directive is only normalized',
+    "default-src 'self'; img-src data:" === Bssec_Headers::strip_reporting_directives( "default-src 'self';img-src data:" ) );
+
+echo "\n== report-only: neither header can be split or broken ==\n";
+$rinj = build( report_only( [
+    'csp_report_only_value' => "default-src 'self'\r\nSet-Cookie: admin=1",
+] ), true, Bssec_Headers::CONTEXT_FRONTEND, REPORT_URL );
+it( 'CR and LF are stripped from the candidate at emit time',
+    ! preg_match( '/[\r\n\0]/', $rinj['Content-Security-Policy-Report-Only'] ) );
+
+foreach ( [
+    'a quote'          => 'https://x.test/r"; evil="https://evil.test',
+    'a newline'        => "https://x.test/r\r\nX-Evil: 1",
+    'a space'          => 'https://x.test/r evil',
+    'a semicolon'      => 'https://x.test/r;script-src *',
+    'a comma'          => 'https://x.test/r,evil="https://evil.test"',
+    'no scheme'        => '//x.test/r',
+    'a javascript URL' => 'javascript:alert(1)',
+] as $what => $bad ) {
+    $h = build( report_only(), true, Bssec_Headers::CONTEXT_FRONTEND, $bad );
+    it( "an address carrying $what sends neither header",
+        ! isset( $h['Content-Security-Policy-Report-Only'] ) && ! isset( $h['Reporting-Endpoints'] ) );
+}
+it( 'an address with a quote is refused outright',
+    '' === Bssec_Headers::clean_report_url( 'https://x.test/r"' ) );
+it( 'an address with a space is refused outright',
+    '' === Bssec_Headers::clean_report_url( 'https://x.test/a b' ) );
+it( 'a plain-permalink REST address is accepted',
+    'https://x.test/?rest_route=/bssec/v1/csp-report'
+    === Bssec_Headers::clean_report_url( 'https://x.test/?rest_route=/bssec/v1/csp-report' ) );
+it( 'an ordinary REST address is accepted', REPORT_URL === Bssec_Headers::clean_report_url( REPORT_URL ) );
+
+echo "\n== report-only: is collection running today? ==\n";
+$tz  = new DateTimeZone( 'America/New_York' );
+$day = fn( string $ymd ) => new DateTimeImmutable( $ymd . ' 12:00:00', $tz );
+$on  = report_only( [ 'csp_report_only_until' => '2026-12-09' ] );
+it( 'before the end date: running',  Bssec_Plugin::report_only_active( $on, $day( '2026-11-09' ) ) );
+it( 'on the end date: still running, the date is inclusive',
+    Bssec_Plugin::report_only_active( $on, $day( '2026-12-09' ) ) );
+it( 'the day after: ended',          ! Bssec_Plugin::report_only_active( $on, $day( '2026-12-10' ) ) );
+it( 'late on the end date, site time: still running',
+    Bssec_Plugin::report_only_active( $on, new DateTimeImmutable( '2026-12-09 23:59:00', $tz ) ) );
+it( 'switched off: not running',     ! Bssec_Plugin::report_only_active( report_only( [ 'csp_report_only' => false ] ), $day( '2026-11-09' ) ) );
+it( 'empty candidate: not running',  ! Bssec_Plugin::report_only_active( report_only( [ 'csp_report_only_value' => ' ' ] ), $day( '2026-11-09' ) ) );
+it( 'no end date: not running, fails toward off',
+    ! Bssec_Plugin::report_only_active( report_only( [ 'csp_report_only_until' => '' ] ), $day( '2026-11-09' ) ) );
+it( 'an impossible end date: not running',
+    ! Bssec_Plugin::report_only_active( report_only( [ 'csp_report_only_until' => '2026-02-31' ] ), $day( '2026-01-09' ) ) );
+it( 'a malformed end date: not running',
+    ! Bssec_Plugin::report_only_active( report_only( [ 'csp_report_only_until' => '12/09/2026' ] ), $day( '2026-11-09' ) ) );
+
+echo "\n== headers are sent from one place, never on template_redirect ==\n";
+// WooCommerce swaps the enforced CSP on template_redirect. What the plugin sends
+// there today is decided: nothing but the hardening's redirects. Enforcing on
+// Checkout is an open question, so a header sent on that hook, or a second
+// place calling header(), should fail here and start that conversation rather
+// than arrive quietly.
+//
+// The first version of this check asserted no template_redirect anywhere in
+// the plugin, and failed on the hardening's author redirects, which are
+// legitimately there. That was the premise being wrong, not the code.
+
+/** Files that call PHP's header() as a function, not a method or a comment. */
+function files_calling_header( array $files ): array {
+    $hits = [];
+    foreach ( $files as $file ) {
+        $tokens = array_values( array_filter(
+            token_get_all( file_get_contents( $file ) ),
+            fn( $t ) => ! is_array( $t ) || ! in_array( $t[0], [ T_WHITESPACE, T_COMMENT, T_DOC_COMMENT ], true )
+        ) );
+        foreach ( $tokens as $i => $t ) {
+            if ( ! is_array( $t ) || T_STRING !== $t[0] || 'header' !== strtolower( $t[1] ) ) continue;
+            $next = $tokens[ $i + 1 ] ?? null;
+            $prev = $tokens[ $i - 1 ] ?? null;
+            if ( '(' !== $next ) continue;
+            if ( is_array( $prev ) && in_array( $prev[0], [ T_OBJECT_OPERATOR, T_DOUBLE_COLON, T_FUNCTION, T_NULLSAFE_OBJECT_OPERATOR ], true ) ) continue;
+            $hits[] = basename( $file );
+        }
+    }
+    return array_values( array_unique( $hits ) );
+}
+
+$plugin_root = dirname( __DIR__ );
+$php_files   = array_merge(
+    [ $plugin_root . '/bs-security.php', $plugin_root . '/uninstall.php' ],
+    glob( $plugin_root . '/includes/*.php' ),
+    glob( $plugin_root . '/admin/*.php' ),
+    glob( $plugin_root . '/admin/views/*.php' )
+);
+it( 'the scan covered the whole plugin', count( $php_files ) > 8 );
+it( 'only the emitter calls header()',
+    [ 'class-bssec-headers.php' ] === files_calling_header( $php_files ) );
+it( 'the header() scan works: it finds a call planted in a scratch file',
+    ( function () {
+        $tmp = tempnam( sys_get_temp_dir(), 'bssec' );
+        file_put_contents( $tmp, "<?php\n// header( 'no' );\n\$o->header( 'no' );\nheader( 'X-Planted: 1' );\n" );
+        $found = files_calling_header( [ $tmp ] );
+        unlink( $tmp );
+        return [ basename( $tmp ) ] === $found;
+    } )() );
+
+$emitter_literals = implode( "\n", string_literals( $src ) );
+it( 'the emitter hooks nothing on template_redirect',
+    false === strpos( $emitter_literals, 'template_redirect' ) );
+it( 'the scan works: it finds send_headers, which the emitter does hook',
+    false !== strpos( $emitter_literals, 'send_headers' ) );
 
 // --- is_https --------------------------------------------------------------
 

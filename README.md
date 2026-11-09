@@ -20,14 +20,55 @@ immediately, and none of them can break a normal site:
 | `Permissions-Policy` | camera, microphone and the three motion sensors blocked | Refuses those features outright, so nothing that reaches a page can prompt a visitor for them. |
 | `X-Frame-Options` | `SAMEORIGIN` | Stops another site displaying these pages in a frame, which is how clickjacking works. |
 
-Three more are available and start switched off, because each one can break
-something or is already handled elsewhere:
+Four more are available and start switched off, because each one can break
+something, is already handled elsewhere, or is a trial:
 
 | Header | Why it is off |
 |---|---|
 | `Strict-Transport-Security` | Cannot be undone. See below. |
 | `Content-Security-Policy` | Has to be written against what a particular site actually loads. |
 | `X-Content-Type-Options` | Kinsta and xCloud already send it. Here for portability. |
+| `Content-Security-Policy-Report-Only` | A trial policy that blocks nothing. See below. |
+
+## CSP report-only
+
+A Content-Security-Policy is the strongest header here and the easiest to get
+wrong: a policy that misses one script source breaks that script quietly. The
+report-only mode is how to find out what a policy would break before it is
+enforced.
+
+Switch it on under **Settings → Security**, paste a candidate policy, and the
+plugin sends it as `Content-Security-Policy-Report-Only`. Visitors' browsers
+block nothing. They report what they would have blocked to
+`/wp-json/bssec/v1/csp-report`, and the plugin folds those reports into one row
+per directive and blocked site, with a count. After a few weeks of normal
+traffic, the real policy is written from that list.
+
+- **It is separate from the enforced policy**, so a site can run a loose
+  enforced policy and a strict candidate side by side.
+- **It reaches WooCommerce's Checkout and My Account pages.** WooCommerce
+  replaces any enforced `Content-Security-Policy` there with its own one-line
+  policy, but it never touches the report-only header, so this is how to see
+  what a policy would do on the payment page.
+- **Collection ends on its own**, 30 days after it is switched on unless a
+  later date is set. Then the header stops and the report address closes.
+- **What is stored:** the directive, the blocked site's address (never the full
+  URL), the page's path, and counts. Never a query string or fragment, and
+  WooCommerce order numbers in paths become `{n}`. No IP address and no user
+  agent.
+- **The report address is public, by necessity.** Browsers send reports with no
+  login. It refuses bodies over 16 KB, takes at most 10 reports per request,
+  adds at most 50 new rows an hour and 500 in all, and counts everything it
+  refuses. A known row always keeps counting, so junk cannot push a real row
+  out. Because anyone can send a report, a site seen once is not evidence that
+  it belongs in the policy.
+- **While it is switched on**, the plugin has a database table, a daily
+  WP-Cron clean-up, and that REST route. A site that never switches it on has
+  none of them.
+- If Perfmatters' **Disable REST API** setting is on, the report address is
+  added to its exceptions while collection runs.
+- On a host with a page cache, purge it after changing the setting. Cached
+  pages keep the headers they were stored with.
 
 ## Hardening
 
@@ -128,8 +169,9 @@ plugin's uninstall deletes them.
 ## Uninstalling
 
 Deactivating stops every header immediately, because the hooks stop firing.
-Deleting the plugin removes its settings. Nothing was written to a file, so
-there is nothing else to clean up.
+Deleting the plugin removes its settings, and on a site that used CSP
+report-only, its reports table, its scheduled clean-up and its two options.
+Nothing was written to a file, so there is nothing else to clean up.
 
 ## Support
 

@@ -154,6 +154,16 @@ final class Bssec_Plugin {
             'csp'                      => false,
             'csp_value'                => '',
 
+            // CSP report-only. A candidate policy the browser checks and
+            // reports against without blocking anything, kept apart from the
+            // enforced one above so a site can run both at once. Collection
+            // ends on its own at csp_report_only_until, so an endpoint nobody
+            // is reading does not keep collecting. Approved by Jason on
+            // November 9, 2026; design in docs/NOTES.md.
+            'csp_report_only'          => false,
+            'csp_report_only_value'    => '',
+            'csp_report_only_until'    => '',
+
             // Hardening. The first three are on out of the box for the same
             // reason the safe headers are: none of them can break a normal
             // site, and installing the plugin is the rollout. Settled with
@@ -167,6 +177,14 @@ final class Bssec_Plugin {
             'redirect_author_archives' => false,
         ];
     }
+
+    /**
+     * How long report-only collection runs when switched on without a date.
+     *
+     * Renewable by saving a later date. Decision C in docs/NOTES.md, settled
+     * with Jason on November 9, 2026.
+     */
+    public const REPORT_ONLY_DAYS = 30;
 
     /** The hardening switches, in display order. All plain on/off. */
     public const HARDENING_KEYS = [
@@ -224,8 +242,13 @@ final class Bssec_Plugin {
      * Sanitizes by input type. Anything unrecognized falls back to the default
      * rather than being stored, so a hand-crafted POST cannot park a junk value
      * in the option and have it emitted later.
+     *
+     * @param DateTimeImmutable|null $today The site's today, for the report-only
+     *                                      end date. Passed in by the tests; the
+     *                                      clock is only read when report-only is
+     *                                      switched on.
      */
-    public static function sanitize( array $raw ): array {
+    public static function sanitize( array $raw, ?DateTimeImmutable $today = null ): array {
         $out = self::defaults();
 
         $out['referrer_policy']      = ! empty( $raw['referrer_policy'] );
@@ -263,7 +286,60 @@ final class Bssec_Plugin {
 
         $out['csp_value'] = self::sanitize_csp( (string) ( $raw['csp_value'] ?? '' ) );
 
+        $out['csp_report_only']       = ! empty( $raw['csp_report_only'] );
+        $out['csp_report_only_value'] = self::sanitize_csp( (string) ( $raw['csp_report_only_value'] ?? '' ) );
+        $out['csp_report_only_until'] = $out['csp_report_only']
+            ? self::sanitize_until( (string) ( $raw['csp_report_only_until'] ?? '' ), $today ?? self::today() )
+            : '';
+
         return $out;
+    }
+
+    /** The site's today, in the site's own timezone. */
+    public static function today(): DateTimeImmutable {
+        return new DateTimeImmutable( 'now', wp_timezone() );
+    }
+
+    /**
+     * The date report-only collection stops, as Y-m-d.
+     *
+     * A real date from today onward is kept. Anything else (empty, malformed,
+     * an impossible date such as February 31, or a date already past) becomes
+     * REPORT_ONLY_DAYS from today. Switching collection on therefore always
+     * yields a working window, and saving the screen on an expired one renews
+     * it rather than silently leaving it off.
+     *
+     * Parsed with createFromFormat() in the site's timezone rather than
+     * strtotime(), which would read it as UTC (PLUGIN_PRIMER.md, antipatterns).
+     */
+    public static function sanitize_until( string $raw, DateTimeImmutable $today ): string {
+        $raw     = trim( $raw );
+        $parsed  = DateTimeImmutable::createFromFormat( '!Y-m-d', $raw, $today->getTimezone() );
+        $is_real = $parsed && $parsed->format( 'Y-m-d' ) === $raw;
+
+        if ( $is_real && $raw >= $today->format( 'Y-m-d' ) ) {
+            return $raw;
+        }
+        return $today->modify( '+' . self::REPORT_ONLY_DAYS . ' days' )->format( 'Y-m-d' );
+    }
+
+    /**
+     * Should the report-only header go out today?
+     *
+     * Fails toward off. A missing, malformed or past end date means no header,
+     * because the option can be written by a restore or wp-cli as well as by
+     * sanitize(), and the safe reading of a date nobody can parse is "ended".
+     * The end date is inclusive: collection runs through that whole day.
+     */
+    public static function report_only_active( array $settings, DateTimeImmutable $today ): bool {
+        if ( empty( $settings['csp_report_only'] ) ) return false;
+        if ( '' === trim( (string) ( $settings['csp_report_only_value'] ?? '' ) ) ) return false;
+
+        $until = (string) ( $settings['csp_report_only_until'] ?? '' );
+        $parsed = DateTimeImmutable::createFromFormat( '!Y-m-d', $until, $today->getTimezone() );
+        if ( ! $parsed || $parsed->format( 'Y-m-d' ) !== $until ) return false;
+
+        return $today->format( 'Y-m-d' ) <= $until;
     }
 
     /**

@@ -20,9 +20,19 @@ $probe_url = wp_nonce_url(
     Bssec_Plugin::PROBE_ACTION
 );
 
+// Report-only: whether collection is running today, and where reports go.
+// The same two values send() uses, so the preview below matches the wire.
+$ro_on      = ! empty( $settings['csp_report_only'] );
+$ro_active  = Bssec_Plugin::report_only_active( $settings, Bssec_Plugin::today() );
+$report_url = $ro_active ? rest_url( Bssec_Headers::REPORT_ROUTE ) : '';
+$ro_until   = (string) ( $settings['csp_report_only_until'] ?? '' );
+$ro_until_d = DateTimeImmutable::createFromFormat( '!Y-m-d', $ro_until );
+$ro_until_h = $ro_until_d ? $ro_until_d->format( 'F j, Y' ) : '';
+$ro_summary = $ro_on ? Bssec_Csp_Reports::summary() : null;
+
 // What build() would emit for a normal front-end page view right now. Shown
 // verbatim so the screen never describes something different from what ships.
-$preview_headers = Bssec_Headers::build( $settings, true, Bssec_Headers::CONTEXT_FRONTEND );
+$preview_headers = Bssec_Headers::build( $settings, true, Bssec_Headers::CONTEXT_FRONTEND, $report_url );
 
 $labels   = Bssec_Plugin::feature_labels();
 $risky    = Bssec_Plugin::risky_features();
@@ -77,6 +87,12 @@ $hardening_on = count( array_filter(
     <?php if ( in_array( 'nocsp', $notices, true ) ) : ?>
         <div class="bssec-notice is-error">
             <p><?php esc_html_e( 'The Content-Security-Policy was left off: write a policy in the box first. An empty policy sends no header at all.', 'bs-security' ); ?></p>
+        </div>
+    <?php endif; ?>
+
+    <?php if ( in_array( 'noreportonly', $notices, true ) ) : ?>
+        <div class="bssec-notice is-error">
+            <p><?php esc_html_e( 'Report-only was left off: write a candidate policy in the box first.', 'bs-security' ); ?></p>
         </div>
     <?php endif; ?>
 
@@ -327,6 +343,104 @@ $hardening_on = count( array_filter(
                         </p>
                     </div>
                 </div>
+
+            </div>
+        </div>
+
+        <!-- CSP report-only ------------------------------------------------->
+        <div class="bssec-card" id="bssec-report-only">
+            <div class="bssec-card-header"><h2><?php esc_html_e( 'CSP report-only', 'bs-security' ); ?></h2></div>
+            <div class="bssec-card-body">
+
+                <p class="bssec-help bssec-lede">
+                    <?php esc_html_e( 'Tries out a candidate policy without blocking anything. Each visitor\'s browser checks the page against it and reports what it would have blocked. Run it for a few weeks of normal traffic, then write the real policy above from what was reported.', 'bs-security' ); ?>
+                </p>
+                <p class="bssec-help">
+                    <?php esc_html_e( 'Unlike the policy above, this one also reaches the WooCommerce Checkout and My Account pages, so it shows what a policy would break on the payment page before anything is blocked there.', 'bs-security' ); ?>
+                </p>
+
+                <div class="bssec-field bssec-field-toggle">
+                    <label class="bssec-toggle">
+                        <input type="checkbox" name="csp_report_only" value="1" data-bssec-controls="bssec-report-only-opts" <?php checked( $ro_on ); ?>>
+                        <span class="bssec-toggle-track"><span class="bssec-toggle-thumb"></span></span>
+                        <span class="bssec-toggle-label"><?php esc_html_e( 'Collect reports against a candidate policy', 'bs-security' ); ?></span>
+                    </label>
+                    <div class="bssec-dependent" id="bssec-report-only-opts" <?php echo $ro_on ? '' : 'hidden'; ?>>
+
+                        <label for="bssec-report-only-value" class="bssec-sublabel"><?php esc_html_e( 'The candidate policy', 'bs-security' ); ?></label>
+                        <textarea name="csp_report_only_value" id="bssec-report-only-value" class="bssec-code" rows="6" spellcheck="false" placeholder="default-src 'self'; script-src 'self' https://js.stripe.com; ..."><?php echo esc_textarea( (string) ( $settings['csp_report_only_value'] ?? '' ) ); ?></textarea>
+                        <p class="bssec-help">
+                            <?php esc_html_e( 'Paste the policy without the header name. Any report-uri or report-to in it is removed, and this plugin adds its own report address.', 'bs-security' ); ?>
+                        </p>
+
+                        <label for="bssec-report-only-until" class="bssec-sublabel"><?php esc_html_e( 'Collect until', 'bs-security' ); ?></label>
+                        <input type="date" name="csp_report_only_until" id="bssec-report-only-until" value="<?php echo esc_attr( $ro_until ); ?>">
+                        <p class="bssec-help">
+                            <?php
+                            printf(
+                                /* translators: %d: number of days */
+                                esc_html__( 'Collection stops at the end of this day: the header stops and the report address closes. Left empty or in the past, it is set to %d days from today when you save.', 'bs-security' ),
+                                (int) Bssec_Plugin::REPORT_ONLY_DAYS
+                            );
+                            ?>
+                        </p>
+
+                        <div class="bssec-callout is-warning">
+                            <p><?php esc_html_e( 'On Kinsta, purge the site cache after saving. Cached pages keep the headers they were stored with, so a change here does not reach visitors until the cache is cleared.', 'bs-security' ); ?></p>
+                        </div>
+
+                    </div>
+                </div>
+
+                <?php if ( $ro_on && $ro_summary ) : ?>
+                    <div class="bssec-field bssec-report-only-status">
+                        <p class="bssec-help">
+                            <strong>
+                            <?php
+                            if ( $ro_active ) {
+                                /* translators: %s: a date such as December 9, 2026 */
+                                printf( esc_html__( 'Collecting until %s.', 'bs-security' ), esc_html( $ro_until_h ) );
+                            } else {
+                                /* translators: %s: a date such as December 9, 2026 */
+                                printf( esc_html__( 'Collection ended on %s. Save with a later date to start again.', 'bs-security' ), esc_html( $ro_until_h ) );
+                            }
+                            ?>
+                            </strong>
+                        </p>
+                        <?php if ( ! $ro_summary['table'] ) : ?>
+                            <p class="bssec-help"><?php esc_html_e( 'The reports table is missing, so nothing is being stored. Save this screen to create it.', 'bs-security' ); ?></p>
+                        <?php else : ?>
+                            <p class="bssec-help">
+                                <?php
+                                printf(
+                                    /* translators: %d: number of distinct directive and source pairs */
+                                    esc_html( _n( '%d source reported so far.', '%d sources reported so far.', $ro_summary['rows'], 'bs-security' ) ),
+                                    (int) $ro_summary['rows']
+                                );
+                                echo ' ';
+                                if ( '' === $ro_summary['last'] ) {
+                                    esc_html_e( 'No reports yet.', 'bs-security' );
+                                } else {
+                                    $last_ts = ( new DateTimeImmutable( $ro_summary['last'], new DateTimeZone( 'UTC' ) ) )->getTimestamp();
+                                    /* translators: %s: a span of time such as 5 minutes */
+                                    printf( esc_html__( 'Last report %s ago.', 'bs-security' ), esc_html( human_time_diff( $last_ts ) ) );
+                                }
+                                if ( $ro_summary['dropped'] > 0 ) {
+                                    echo ' ';
+                                    printf(
+                                        /* translators: %d: number of reports refused */
+                                        esc_html( _n( '%d report refused.', '%d reports refused.', $ro_summary['dropped'], 'bs-security' ) ),
+                                        (int) $ro_summary['dropped']
+                                    );
+                                }
+                                ?>
+                            </p>
+                        <?php endif; ?>
+                        <?php if ( $ro_active ) : ?>
+                            <p class="bssec-help"><?php esc_html_e( 'Reports go to', 'bs-security' ); ?> <code><?php echo esc_html( $report_url ); ?></code></p>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
 
             </div>
         </div>

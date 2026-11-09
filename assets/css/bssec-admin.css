@@ -165,6 +165,23 @@
     margin: 0;
 }
 
+.bssec-field input[type="date"] {
+    box-sizing: border-box;
+    height: var(--bssec-input-height);
+    padding: var(--bssec-input-pad);
+    border: var(--bssec-input-border);
+    border-radius: var(--bssec-input-radius);
+    background: #fff;
+    color: var(--bssec-text);
+    font-size: 13px;
+    margin: 0;
+}
+
+/* A second field inside one switch's options needs room above its label. */
+.bssec-dependent .bssec-help + .bssec-sublabel {
+    margin-top: 20px;
+}
+
 .bssec-field textarea.bssec-code {
     box-sizing: border-box;
     display: block;

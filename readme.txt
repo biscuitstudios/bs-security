@@ -4,7 +4,7 @@ Tags: security, security headers, hardening, user enumeration, login
 Requires at least: 6.3
 Tested up to: 7.1
 Requires PHP: 8.2
-Stable tag: 0.2.0
+Stable tag: 0.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -28,6 +28,35 @@ Replacing Biscuit Security Headers: activate this plugin first, so it copies the
 old header settings, then deactivate and delete Biscuit Security Headers.
 
 == Changelog ==
+
+= 0.3.0 =
+* New: CSP report-only. A second policy, separate from the enforced one, that
+  blocks nothing. Each visitor's browser checks pages against it and reports
+  what it would have blocked, so a real policy can be written from what a site
+  actually loads before anything is enforced. Off by default. Under
+  Settings > Security, "CSP report-only".
+* New: reports are folded into one row per directive and blocked site, with a
+  count and the time of the last report. Only the blocked site's address and
+  the page's path are kept. Query strings and fragments are never stored, and
+  order numbers in WooCommerce paths are replaced with {n}.
+* New: collection ends on its own, 30 days after it is switched on unless a
+  later date is set. After that the header stops and the report address
+  closes.
+* Note: while report-only is switched on, the plugin has its first database
+  table (wp_bssec_csp_reports, capped at 500 rows, with rows not reported for
+  30 days removed daily), its first scheduled task (that daily clean-up, on
+  WP-Cron), and a public address browsers send reports to,
+  /wp-json/bssec/v1/csp-report, with limits on size, batch and new rows per
+  hour. None of the three exists on a site that never switches it on.
+  Deleting the plugin removes all three.
+* Note: this policy also reaches the WooCommerce Checkout and My Account
+  pages, where WooCommerce replaces the enforced Content-Security-Policy with
+  its own one-line policy.
+* Note: if Perfmatters' "Disable REST API" setting is on, the report address
+  is added to its exceptions while collection runs, or every report would be
+  refused.
+* Note: on Kinsta, purge the site cache after changing these settings. Cached
+  pages keep the headers they were stored with.
 
 = 0.2.0 =
 * Change: this is Biscuit Security Headers under a new name, folder and

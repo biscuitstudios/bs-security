@@ -49,6 +49,12 @@ class Bssec_Headers {
      */
     public const CONTEXT_PREVIEW = 'preview';
 
+    /** The REST route browsers send CSP reports to. Registered in build step 2. */
+    public const REPORT_ROUTE = 'bssec/v1/csp-report';
+
+    /** The Reporting API group name, shared by report-to and Reporting-Endpoints. */
+    public const REPORT_GROUP = 'bssec';
+
     public function init(): void {
         // Front end. Fires inside WP::send_headers(), before any output.
         add_action( 'send_headers', [ $this, 'send_frontend' ] );
@@ -75,7 +81,19 @@ class Bssec_Headers {
         // would only emit a warning into the middle of the page.
         if ( headers_sent() ) return;
 
-        $headers = self::build( Bssec_Plugin::settings(), self::is_https(), $context );
+        $settings = Bssec_Plugin::settings();
+
+        // The report address is decided here, not in build(), because whether
+        // collection is still running depends on today's date, and build()
+        // stays a pure function with no clock. Never computed in admin, where
+        // build() would discard it anyway.
+        $report_url = '';
+        if ( self::CONTEXT_ADMIN !== $context
+            && Bssec_Plugin::report_only_active( $settings, Bssec_Plugin::today() ) ) {
+            $report_url = rest_url( self::REPORT_ROUTE );
+        }
+
+        $headers = self::build( $settings, self::is_https(), $context, $report_url );
 
         foreach ( $headers as $name => $value ) {
             header( $name . ': ' . $value );
@@ -90,13 +108,17 @@ class Bssec_Headers {
      * restore, a migration, wp-cli, a stale row from an older version — still
      * cannot split the response.
      *
-     * @param array  $settings Full settings array, already merged with defaults.
-     * @param bool   $is_https Whether the visitor's connection is secure.
-     * @param string $context  One of the CONTEXT_* constants.
+     * @param array  $settings   Full settings array, already merged with defaults.
+     * @param bool   $is_https   Whether the visitor's connection is secure.
+     * @param string $context    One of the CONTEXT_* constants.
+     * @param string $report_url Where browsers send CSP reports. Empty means
+     *                           report-only collection is not running today,
+     *                           and no report-only header is sent. The caller
+     *                           decides, because that depends on the date.
      *
      * @return array<string,string> Header name => value, in emission order.
      */
-    public static function build( array $settings, bool $is_https, string $context = self::CONTEXT_FRONTEND ): array {
+    public static function build( array $settings, bool $is_https, string $context = self::CONTEXT_FRONTEND, string $report_url = '' ): array {
         $headers = [];
 
         $is_admin   = self::CONTEXT_ADMIN === $context;
@@ -173,7 +195,71 @@ class Bssec_Headers {
             }
         }
 
+        // --- Content-Security-Policy-Report-Only ------------------------------
+        // The candidate policy. The browser blocks nothing and reports what it
+        // would have blocked. Same context rules as the enforced CSP: front end
+        // only, for the same two reasons.
+        //
+        // This header reaches WooCommerce's Checkout and My Account, where the
+        // enforced one does not: wc_send_frame_options_header() makes core send
+        // its own Content-Security-Policy there, replacing ours, and core never
+        // sends the Report-Only header. This class sends nothing on
+        // template_redirect, and no other file in the plugin calls header(),
+        // and a test holds both. (The hardening class does hook
+        // template_redirect, for the author redirects, but sets no header
+        // there beyond the redirect itself.)
+        //
+        // Both reporting mechanisms are named. Firefox and Safari read
+        // report-uri; Chrome and Edge read report-to when it is present and
+        // ignore report-uri. Any reporting directive already in the pasted
+        // policy is removed first, so a policy copied from another site cannot
+        // send this site's reports there.
+        if ( ! empty( $settings['csp_report_only'] ) && ! $is_admin && ! $is_preview ) {
+            $url    = self::clean_report_url( $report_url );
+            $policy = self::strip_reporting_directives(
+                Bssec_Plugin::clean_header_value( (string) ( $settings['csp_report_only_value'] ?? '' ) )
+            );
+            if ( '' !== $url && '' !== $policy ) {
+                $headers['Content-Security-Policy-Report-Only'] =
+                    $policy . '; report-uri ' . $url . '; report-to ' . self::REPORT_GROUP;
+                $headers['Reporting-Endpoints'] = self::REPORT_GROUP . '="' . $url . '"';
+            }
+        }
+
         return $headers;
+    }
+
+    /**
+     * Remove report-uri and report-to directives from a policy.
+     *
+     * Directive names are case-insensitive in CSP, so REPORT-URI goes too.
+     * Empty directives (a doubled or trailing semicolon) are dropped, and the
+     * rest are rejoined with "; ", which is also what the browser sees.
+     */
+    public static function strip_reporting_directives( string $policy ): string {
+        $kept = [];
+        foreach ( explode( ';', $policy ) as $directive ) {
+            $directive = trim( $directive );
+            if ( '' === $directive ) continue;
+            $name = strtolower( (string) strtok( $directive, " \t" ) );
+            if ( 'report-uri' === $name || 'report-to' === $name ) continue;
+            $kept[] = $directive;
+        }
+        return implode( '; ', $kept );
+    }
+
+    /**
+     * A report address safe to put in both headers, or '' if it is not.
+     *
+     * It lands bare in the CSP, where a space or semicolon would start a new
+     * token or directive, and inside double quotes in Reporting-Endpoints,
+     * where a quote or comma would end the value. So those are refused
+     * outright rather than cleaned. rest_url() never produces them; this is for
+     * a filter or a broken home URL that might.
+     */
+    public static function clean_report_url( string $url ): string {
+        $url = Bssec_Plugin::clean_header_value( $url );
+        return preg_match( '#^https?://[^\s"\';,<>\\\\]+$#i', $url ) ? $url : '';
     }
 
     /**
