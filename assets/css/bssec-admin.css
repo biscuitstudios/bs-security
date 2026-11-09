@@ -1,0 +1,380 @@
+/**
+ * Biscuit Security — admin styles.
+ * WP-admin-native card UI per docs/PLUGIN_PRIMER.md.
+ */
+
+.bssec-wrap {
+    /* Colors */
+    --bssec-bg:           #f0f0f1;
+    --bssec-card-bg:      #fff;
+    --bssec-text:         #1e1e1e;
+    --bssec-text-body:    #3c434a;
+    --bssec-text-muted:   #757575;
+    --bssec-border:       #e2e4e7;
+    --bssec-table-th-bg:  #f0f0f0;
+    --bssec-accent:       #2271b1;
+    --bssec-success:      #1e8a3e;
+    --bssec-error:        #d63638;
+    --bssec-warning:      #b26200;
+
+    /* Card surface */
+    --bssec-card-radius:  4px;
+    --bssec-card-shadow:  0 0 0 1px rgba(0, 0, 0, 0.1);
+    --bssec-card-pad:     24px;
+    --bssec-card-hdr-pad: 16px 24px;
+    --bssec-card-gap:     24px;
+
+    /* Form controls */
+    --bssec-input-height: 44px;
+    --bssec-input-pad:    0 12px;
+    --bssec-input-radius: 4px;
+    --bssec-input-border: 1px solid #c3c4c7;
+
+    max-width: 840px;
+    margin-right: 20px;
+    color: var(--bssec-text-body);
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+/* Header ------------------------------------------------------------------ */
+
+.bssec-header {
+    position: sticky;
+    top: 32px;
+    z-index: 100;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 20px 24px;
+    background: var(--bssec-card-bg);
+    box-shadow: var(--bssec-card-shadow);
+    border-radius: var(--bssec-card-radius);
+    margin: 20px 0 var(--bssec-card-gap);
+}
+@media (max-width: 782px) {
+    .bssec-header { top: 46px; }
+}
+.bssec-header h1 {
+    margin: 0;
+    padding: 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--bssec-text);
+}
+.bssec-pill {
+    flex: none;
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+}
+.bssec-pill.is-on  { background: #edfaef; color: var(--bssec-success);    box-shadow: inset 0 0 0 1px rgba(30, 138, 62, 0.25); }
+.bssec-pill.is-off { background: #f6f7f7; color: var(--bssec-text-muted); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12); }
+
+/* Notices ----------------------------------------------------------------- */
+
+.bssec-notice {
+    background: var(--bssec-card-bg);
+    box-shadow: var(--bssec-card-shadow);
+    border-left: 4px solid var(--bssec-accent);
+    border-radius: var(--bssec-card-radius);
+    padding: 12px 16px;
+    margin: 0 0 var(--bssec-card-gap);
+}
+.bssec-notice p { margin: 0; }
+.bssec-notice.is-success { border-left-color: var(--bssec-success); }
+.bssec-notice.is-error   { border-left-color: var(--bssec-error); }
+.bssec-notice.is-warning { border-left-color: var(--bssec-warning); }
+
+/* Cards ------------------------------------------------------------------- */
+
+.bssec-card {
+    background: var(--bssec-card-bg);
+    border: 0;
+    border-radius: var(--bssec-card-radius);
+    box-shadow: var(--bssec-card-shadow);
+    margin: 0 0 var(--bssec-card-gap);
+}
+.bssec-card-header {
+    padding: var(--bssec-card-hdr-pad);
+    background: transparent;
+    border-bottom: 1px solid var(--bssec-border);
+    border-radius: var(--bssec-card-radius) var(--bssec-card-radius) 0 0;
+}
+.bssec-card-header h2 {
+    margin: 0;
+    padding: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--bssec-text);
+}
+.bssec-card-body { padding: var(--bssec-card-pad); }
+
+/* Callouts inside a card -------------------------------------------------- */
+
+.bssec-callout {
+    padding: 12px 16px;
+    margin: 0 0 24px;
+    border-left: 4px solid var(--bssec-text-muted);
+    border-radius: var(--bssec-input-radius);
+    background: #f6f7f7;
+}
+.bssec-callout.is-warning { border-left-color: var(--bssec-warning); background: #fcf9f2; }
+.bssec-callout.is-error   { border-left-color: var(--bssec-error);   background: #fcf0f1; }
+.bssec-callout p { margin: 0 0 8px; line-height: 1.5; }
+.bssec-callout p:last-child { margin-bottom: 0; }
+
+/* Fields ------------------------------------------------------------------ */
+
+.bssec-field { margin: 0 0 24px; }
+.bssec-field:last-child { margin-bottom: 0; }
+
+/* :not(.bssec-toggle) matters — without it this rule outranks .bssec-toggle on
+   specificity (0,1,1 vs 0,1,0), forcing the toggle label to display:block and
+   collapsing the switch track to an inline element with no size. */
+.bssec-field > label:not(.bssec-toggle) {
+    display: block;
+    margin: 0 0 6px;
+    font-weight: 600;
+    color: var(--bssec-text);
+}
+
+.bssec-sublabel {
+    display: block;
+    margin: 0 0 6px;
+    font-weight: 600;
+    color: var(--bssec-text);
+}
+
+.bssec-field select:not([multiple]) {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    /* height, not min-height — native chrome pushes min-height inputs past 44px */
+    height: var(--bssec-input-height);
+    padding: var(--bssec-input-pad);
+    border: var(--bssec-input-border);
+    border-radius: var(--bssec-input-radius);
+    background: #fff;
+    color: var(--bssec-text);
+    font-size: 13px;
+    line-height: 1.4;
+    margin: 0;
+}
+
+.bssec-field textarea.bssec-code {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    padding: 10px 12px;
+    border: var(--bssec-input-border);
+    border-radius: var(--bssec-input-radius);
+    background: #fff;
+    color: var(--bssec-text);
+    font-family: Menlo, Consolas, monaco, monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    resize: vertical;
+    margin: 0;
+    tab-size: 4;
+}
+.bssec-field textarea.bssec-code:focus {
+    border-color: var(--bssec-accent);
+    box-shadow: 0 0 0 1px var(--bssec-accent);
+    outline: 2px solid transparent;
+}
+
+.bssec-help {
+    margin: 8px 0 0;
+    color: var(--bssec-text-muted);
+    font-size: 13px;
+    line-height: 1.5;
+}
+.bssec-help strong { color: var(--bssec-text-body); }
+.bssec-lede { margin: 0 0 24px; }
+
+/* Toggle ------------------------------------------------------------------ */
+
+.bssec-field > label.bssec-toggle,
+.bssec-toggle {
+    position: relative;   /* contain the absolutely-positioned checkbox */
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0;
+    cursor: pointer;
+    user-select: none;
+}
+/* Visually hidden but still focusable and still announced by screen readers. */
+.bssec-toggle input[type="checkbox"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    opacity: 0;
+    pointer-events: none;
+}
+.bssec-toggle-track {
+    flex: none;
+    display: inline-block;
+    position: relative;
+    width: 40px;
+    height: 22px;
+    border-radius: 999px;
+    background: #c3c4c7;
+    transition: background 0.15s ease-in-out;
+}
+.bssec-toggle-thumb {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.15s ease-in-out;
+}
+.bssec-toggle input:checked + .bssec-toggle-track { background: var(--bssec-accent); }
+.bssec-toggle input:checked + .bssec-toggle-track .bssec-toggle-thumb { transform: translateX(18px); }
+.bssec-toggle input:focus-visible + .bssec-toggle-track { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--bssec-accent); }
+.bssec-toggle-label { font-weight: 600; color: var(--bssec-text); }
+
+.bssec-field-toggle .bssec-help { margin-left: 50px; }
+.bssec-field-toggle .bssec-dependent { margin-left: 50px; }
+
+/* Dependent blocks -------------------------------------------------------- */
+
+.bssec-dependent {
+    margin-top: 16px;
+    padding-left: 16px;
+    border-left: 2px solid var(--bssec-border);
+}
+.bssec-dependent[hidden] { display: none; }
+
+/* Feature checklist ------------------------------------------------------- */
+
+.bssec-checklist {
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+.bssec-checklist legend { padding: 0; }
+
+.bssec-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--bssec-border);
+    cursor: pointer;
+}
+.bssec-check:last-child { border-bottom: 0; }
+.bssec-check input[type="checkbox"] {
+    flex: none;
+    margin: 2px 0 0;
+}
+.bssec-check-text { display: block; }
+.bssec-check-label {
+    font-weight: 600;
+    color: var(--bssec-text);
+    margin-right: 6px;
+}
+.bssec-check code {
+    background: #f6f7f7;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11px;
+    color: var(--bssec-text-muted);
+}
+.bssec-check-warn {
+    display: block;
+    margin-top: 3px;
+    color: var(--bssec-warning);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+/* Results table ----------------------------------------------------------- */
+
+.bssec-table {
+    width: 100%;
+    margin: 16px 0 0;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+.bssec-table th,
+.bssec-table td {
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--bssec-border);
+    word-break: break-word;
+}
+.bssec-table thead th {
+    background: var(--bssec-table-th-bg);
+    font-weight: 600;
+    color: var(--bssec-text);
+    white-space: nowrap;
+}
+.bssec-table tbody th {
+    font-weight: 400;
+    white-space: nowrap;
+}
+.bssec-table code {
+    background: transparent;
+    padding: 0;
+    font-size: 11px;
+    color: var(--bssec-text-body);
+}
+.bssec-table tbody th code { color: var(--bssec-text); }
+.bssec-table tr.is-absent th code,
+.bssec-table tr.is-absent td { color: var(--bssec-text-muted); }
+
+.bssec-muted { color: var(--bssec-text-muted); }
+
+.bssec-tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: #f0f6fc;
+    color: var(--bssec-accent);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.bssec-tag.is-warning { background: #fcf9f2; color: var(--bssec-warning); }
+
+.bssec-result-meta {
+    margin: 12px 0 0;
+    color: var(--bssec-text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+/* Generated header preview ------------------------------------------------ */
+
+.bssec-preview {
+    margin: 0;
+    padding: 12px 16px;
+    border-radius: var(--bssec-input-radius);
+    background: #f6f7f7;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.07);
+    font-family: Menlo, Consolas, monaco, monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--bssec-text-body);
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-x: auto;
+}
+
+/* Actions ----------------------------------------------------------------- */
+
+.bssec-actions { margin: 0 0 var(--bssec-card-gap); }
+.bssec-actions .button-large { height: var(--bssec-input-height); padding: 0 24px; }
