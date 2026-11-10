@@ -33,6 +33,7 @@ function esc_textarea( $t )           { return htmlspecialchars( (string) $t, EN
 function esc_url( $u )                { return htmlspecialchars( (string) $u, ENT_QUOTES, 'UTF-8' ); }
 function esc_html__( $t, $d = '' )    { return esc_html( $t ); }
 function esc_html_e( $t, $d = '' )    { echo esc_html( $t ); }
+function esc_attr_e( $t, $d = '' )    { echo esc_attr( $t ); }
 function _n( $s, $p, $n, $d = '' )    { return 1 === (int) $n ? $s : $p; }
 function sanitize_text_field( $v )    { return trim( strip_tags( (string) $v ) ); }
 function wp_unslash( $v )             { return is_string( $v ) ? stripslashes( $v ) : $v; }
@@ -228,7 +229,6 @@ $GLOBALS['transients'][ Bssec_Admin::probe_key() ] = [
         'referrer-policy'        => 'strict-origin-when-cross-origin',
         // Page only: added by PHP.
         'x-frame-options'        => 'DENY',
-        'x-xss-protection'       => '1; mode=block',
     ],
     'errors'     => [ 'a sample error line' ],
     'checked_at' => time() - 120,
@@ -263,7 +263,16 @@ it( 'the matching row is classed as the server\'s',
     (bool) preg_match( '#<tr class="is-server">\s*<th scope="row"><code>x-content-type-options</code>#', $html2 ) );
 it( 'a header nobody sends is classed absent',
     (bool) preg_match( '#<tr class="is-absent">\s*<th scope="row"><code>permissions-policy</code>#', $html2 ) );
-it( 'a dead header still on the site is reported', false !== strpos( $html2, 'x-xss-protection' ) );
+// X-XSS-Protection and Expect-CT were reported until 0.4.1. Browsers ignore
+// both, so they only ever added two "not sent" rows; removed November 10, 2026.
+it( 'the retired headers are not on the reported list',
+    ! in_array( 'x-xss-protection', Bssec_Server_Check::REPORTED, true )
+    && ! in_array( 'expect-ct', Bssec_Server_Check::REPORTED, true ) );
+it( 'the table has one row per header this plugin can send, and no others',
+    count( Bssec_Server_Check::REPORTED ) === preg_match_all( '#<tr class="is-(?:absent|php|overridden|server)">#', $html2 )
+    && 6 === count( Bssec_Server_Check::REPORTED ) );
+it( 'neither retired header has a row',
+    false === strpos( $html2, '<code>x-xss-protection</code>' ) && false === strpos( $html2, '<code>expect-ct</code>' ) );
 it( 'the probe error line is shown', false !== strpos( $html2, 'a sample error line' ) );
 it( 'the check time is shown',       false !== strpos( $html2, '2 minutes ago' ) );
 
@@ -483,6 +492,117 @@ $_GET['bssec-notice'] = 'noreportonly';
 it( 'the empty-candidate notice renders',
     false !== strpos( render( Bssec_Plugin::defaults() ), 'Report-only was left off' ) );
 unset( $_GET['bssec-notice'] );
+
+echo "\n== tabs ==\n";
+
+/** One tab panel's markup, by its slug. Panels are siblings, never nested. */
+function panel( string $html, string $slug ): string {
+    return preg_match( '#<div class="bssec-panel" id="bssec-panel-' . $slug . '"[^>]*>(.*?)</div><!-- /Tab:#s', $html, $m ) ? $m[1] : '';
+}
+/** The opening tag of one panel, to read its hidden state. */
+function panel_tag( string $html, string $slug ): string {
+    return preg_match( '#<div class="bssec-panel" id="bssec-panel-' . $slug . '"[^>]*>#', $html, $m ) ? $m[0] : '';
+}
+/** The settings form, from its opening tag to its own close. */
+function settings_form( string $html ): string {
+    return preg_match( '#<form method="post"[^>]*>\s*<input type="hidden" name="action" value="bssec_save_settings">(.*?)</form>#s', $html, $m ) ? $m[1] : '';
+}
+
+$h_tabs = render( Bssec_Plugin::defaults() );
+it( 'four tabs, in order',
+    (bool) preg_match( '#id="bssec-tab-hardening".*?id="bssec-tab-headers".*?id="bssec-tab-csp".*?id="bssec-tab-check"#s', $h_tabs ) );
+it( 'each tab links to its own page load, for when the script fails',
+    false !== strpos( $h_tabs, 'href="https://example.test/wp-admin/options-general.php?page=bssec-security&amp;bssec-tab=headers"' ) );
+foreach ( Bssec_Admin::TABS as $slug ) {
+    it( "the $slug panel was found", '' !== panel( $h_tabs, $slug ) );
+}
+it( 'Hardening is open by default and the others are hidden',
+    false === strpos( panel_tag( $h_tabs, 'hardening' ), 'hidden' )
+    && false !== strpos( panel_tag( $h_tabs, 'headers' ), 'hidden' )
+    && false !== strpos( panel_tag( $h_tabs, 'csp' ), 'hidden' )
+    && false !== strpos( panel_tag( $h_tabs, 'check' ), 'hidden' ) );
+it( 'only the open tab is marked active',
+    1 === substr_count( $h_tabs, 'nav-tab-active' )
+    && (bool) preg_match( '#class="nav-tab nav-tab-active"\s+id="bssec-tab-hardening"#', $h_tabs ) );
+
+// The trap the single form exists to avoid: sanitize() reads a missing
+// checkbox as off, so a setting outside the form would be switched off by
+// every save. Every control, on every tab, must be inside the one form.
+$form = settings_form( $h_tabs );
+it( 'the settings form was found', '' !== $form );
+$outside = [];
+foreach ( [
+    'block_user_enumeration', 'redirect_author_archives', 'mask_login_errors', 'disable_file_editor',
+    'referrer_policy', 'referrer_policy_value', 'permissions_policy', 'permissions_policy_block[]',
+    'frame_options', 'frame_options_value', 'content_type_options', 'hsts', 'hsts_max_age',
+    'csp', 'csp_value', 'csp_report_only', 'csp_report_only_value', 'csp_report_only_until',
+] as $field ) {
+    if ( false === strpos( $form, 'name="' . $field . '"' ) ) $outside[] = $field;
+}
+it( 'every setting is inside the one form: ' . ( $outside ? implode( ', ', $outside ) : 'ok' ), [] === $outside );
+
+// And each on the tab it belongs to.
+$where = [
+    'hardening' => [ 'block_user_enumeration', 'redirect_author_archives', 'mask_login_errors', 'disable_file_editor' ],
+    'headers'   => [ 'referrer_policy', 'permissions_policy', 'frame_options', 'content_type_options', 'hsts', 'hsts_max_age' ],
+    'csp'       => [ 'csp', 'csp_value', 'csp_report_only', 'csp_report_only_value', 'csp_report_only_until' ],
+];
+foreach ( $where as $slug => $fields ) {
+    $miss = array_filter( $fields, fn( $f ) => false === strpos( panel( $h_tabs, $slug ), 'name="' . $f . '"' ) );
+    it( "the $slug tab holds its settings" . ( $miss ? ': missing ' . implode( ', ', $miss ) : '' ), [] === $miss );
+}
+it( 'the Check tab holds no settings', false === strpos( panel( $h_tabs, 'check' ), 'name="' ) );
+it( 'the Check tab holds the probe and the preview',
+    false !== strpos( panel( $h_tabs, 'check' ), 'id="bssec-server-check"' )
+    && false !== strpos( panel( $h_tabs, 'check' ), 'class="bssec-preview"' ) );
+it( 'the Check tab sits outside the settings form', false === strpos( $form, 'id="bssec-panel-check"' ) );
+
+it( 'the form carries the open tab, so Save comes back to it',
+    false !== strpos( $form, '<input type="hidden" name="bssec-tab" value="hardening">' ) );
+it( 'Save says it saves every tab', false !== strpos( $h_tabs, 'Saves the settings on every tab' ) );
+it( 'Save shows on a settings tab', (bool) preg_match( '#<div class="bssec-actions">#', $h_tabs ) );
+
+$_GET['bssec-tab'] = 'check';
+$h_check = render( Bssec_Plugin::defaults() );
+it( 'asking for Check opens it and hides Hardening',
+    false === strpos( panel_tag( $h_check, 'check' ), 'hidden' )
+    && false !== strpos( panel_tag( $h_check, 'hardening' ), 'hidden' ) );
+it( 'Save is hidden on the Check tab', (bool) preg_match( '#<div class="bssec-actions" hidden>#', $h_check ) );
+it( 'the form still carries the open tab',
+    false !== strpos( $h_check, '<input type="hidden" name="bssec-tab" value="check">' ) );
+
+$_GET['bssec-tab'] = '"><script>alert(4)</script>';
+$h_bad = render( Bssec_Plugin::defaults() );
+it( 'an unknown tab falls back to Hardening',
+    false === strpos( panel_tag( $h_bad, 'hardening' ), 'hidden' ) );
+it( 'and is never printed', false === strpos( $h_bad, 'alert(4)' ) );
+unset( $_GET['bssec-tab'] );
+
+echo "\n== tab_from and the save redirect ==\n";
+it( 'a known tab is kept',           'csp' === Bssec_Admin::tab_from( 'csp' ) );
+it( 'an empty value is the first',   'hardening' === Bssec_Admin::tab_from( '' ) );
+it( 'an unknown value is the first', 'hardening' === Bssec_Admin::tab_from( 'settings' ) );
+it( 'case counts',                   'hardening' === Bssec_Admin::tab_from( 'CSP' ) );
+it( 'an array is the first',         'hardening' === Bssec_Admin::tab_from( [ 'csp' ] ) );
+it( 'null is the first',             'hardening' === Bssec_Admin::tab_from( null ) );
+
+$args = Bssec_Admin::save_redirect_args( [], 'headers' );
+it( 'Save returns to the tab it was sent from',
+    'headers' === ( $args['bssec-tab'] ?? '' ) && '1' === ( $args['bssec-updated'] ?? '' ) && ! isset( $args['bssec-notice'] ) );
+$args = Bssec_Admin::save_redirect_args( [ 'nocsp' ], 'hardening' );
+it( 'a refused CSP switch opens the CSP tab, whatever tab saved',
+    'csp' === ( $args['bssec-tab'] ?? '' ) && 'nocsp' === ( $args['bssec-notice'] ?? '' ) );
+$args = Bssec_Admin::save_redirect_args( [], 'nonsense' );
+it( 'a forged tab returns to the first', 'hardening' === ( $args['bssec-tab'] ?? '' ) );
+
+echo "\n== no text points at a card on another tab ==\n";
+it( 'X-Content-Type-Options names the Check tab, not "the check below"',
+    false !== strpos( panel( $h_tabs, 'headers' ), 'only if the Check tab' )
+    && false === strpos( $h_tabs, 'the check below' ) );
+it( 'the preview no longer says "the saved settings above"',
+    false === strpos( $h_tabs, 'The saved settings above' ) );
+it( 'report-only still says "above", and the policy it means is above it on the same tab',
+    (bool) preg_match( '#name="csp_value".*?write the real policy above#s', panel( $h_tabs, 'csp' ) ) );
 
 echo "\n== the Settings menu entry ==\n";
 // "Biscuit Security" since 0.4.0, Jason's call on November 10, 2026. The slug

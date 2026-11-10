@@ -102,8 +102,8 @@ server it was never meant to touch.
 was removed from Chrome and Edge, and the filter it switched on was itself an
 attack vector; the correct modern value is `0`, which is the same as not sending
 it. `Expect-CT` was deprecated in 2021 and removed. Plugins still offering these
-are offering a green tick, not a defence. The check screen reports them if
-something else on the site is sending them, so you can go and turn that off.
+are offering a green tick, not a defence. The check screen does not list them
+either, since browsers ignore them wherever they come from.
 
 **No HSTS `includeSubDomains`, and no `preload`.** Not as a default, as a
 capability. There is no setting for either and the code cannot assemble the

@@ -11,6 +11,41 @@ class Bssec_Admin {
 
     public const SLUG = 'bssec-security';
 
+    /** The query argument and form field naming the open tab. */
+    public const TAB_PARAM = 'bssec-tab';
+
+    /** The screen's tabs, in order. The first is the default. */
+    public const TABS = [ 'hardening', 'headers', 'csp', 'check' ];
+
+    /**
+     * A tab name from a request, or the first tab.
+     *
+     * Only ever returns a value from TABS, so the result is safe to print and
+     * to put in a URL without further cleaning.
+     *
+     * @param mixed $raw
+     */
+    public static function tab_from( $raw ): string {
+        return is_string( $raw ) && in_array( $raw, self::TABS, true ) ? $raw : self::TABS[0];
+    }
+
+    /**
+     * Where Save sends the browser back to.
+     *
+     * The tab the form was saved from, except when a CSP switch was refused:
+     * the notice explaining why sits at the top of the page, and the box it
+     * is about is on the Content-Security-Policy tab.
+     *
+     * @param string[] $notices
+     * @param mixed    $raw_tab
+     */
+    public static function save_redirect_args( array $notices, $raw_tab ): array {
+        $args = [ 'page' => self::SLUG, 'bssec-updated' => '1' ];
+        if ( $notices ) $args['bssec-notice'] = implode( ',', $notices );
+        $args[ self::TAB_PARAM ] = $notices ? 'csp' : self::tab_from( $raw_tab );
+        return $args;
+    }
+
     public function init(): void {
         add_action( 'admin_menu', [ $this, 'register_menu' ] );
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue' ] );
@@ -177,8 +212,7 @@ class Bssec_Admin {
         // something it no longer sends, so drop it and let them re-run.
         delete_transient( self::probe_key() );
 
-        $args = [ 'page' => self::SLUG, 'bssec-updated' => '1' ];
-        if ( $notices ) $args['bssec-notice'] = implode( ',', $notices );
+        $args = self::save_redirect_args( $notices, $raw[ self::TAB_PARAM ] ?? '' );
 
         wp_safe_redirect( add_query_arg( $args, admin_url( 'options-general.php' ) ) );
         exit;
@@ -196,7 +230,7 @@ class Bssec_Admin {
         set_transient( self::probe_key(), Bssec_Server_Check::run(), 15 * MINUTE_IN_SECONDS );
 
         wp_safe_redirect( add_query_arg(
-            [ 'page' => self::SLUG, 'bssec-checked' => '1' ],
+            [ 'page' => self::SLUG, 'bssec-checked' => '1', self::TAB_PARAM => 'check' ],
             admin_url( 'options-general.php' )
         ) . '#bssec-server-check' );
         exit;
@@ -215,7 +249,7 @@ class Bssec_Admin {
         $removed = Bssec_Csp_Reports::clear();
 
         wp_safe_redirect( add_query_arg(
-            [ 'page' => self::SLUG, 'bssec-cleared' => (string) $removed ],
+            [ 'page' => self::SLUG, 'bssec-cleared' => (string) $removed, self::TAB_PARAM => 'csp' ],
             admin_url( 'options-general.php' )
         ) . '#bssec-report-only' );
         exit;

@@ -30,11 +30,13 @@ class Bssec_Server_Check {
     public const TRANSIENT = 'bssec_server_check';
 
     /**
-     * The headers worth reporting on, lowercased.
+     * The headers worth reporting on, lowercased: everything this plugin can
+     * send, and nothing else.
      *
-     * Everything this plugin can send, plus the two dead ones, so a site still
-     * carrying them from an older tool shows up here rather than staying
-     * invisible.
+     * X-XSS-Protection and Expect-CT were listed until 0.4.1, so a site still
+     * sending them from an older tool would show up. Removed on Jason's call,
+     * November 10, 2026: browsers ignore both, so the two rows only ever read
+     * "not sent" and made the table longer.
      */
     public const REPORTED = [
         'strict-transport-security',
@@ -43,8 +45,6 @@ class Bssec_Server_Check {
         'x-frame-options',
         'x-content-type-options',
         'content-security-policy',
-        'x-xss-protection',
-        'expect-ct',
     ];
 
     /**

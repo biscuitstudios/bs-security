@@ -112,7 +112,9 @@ $reader->setAccessible( true );
 $shipped = $reader->invoke( $updater );
 it( "the shipped changelog has $version", isset( $shipped[ $version ] ) );
 it( 'and it is the changelog, not the notice',
-    isset( $shipped[ $version ] ) && false === strpos( $shipped[ $version ], 'Headers:' ) && 0 === strpos( $shipped[ $version ], '* New:' ) );
+    // A bullet, not "* New:" as it was until 0.4.1: a release can lead with a
+    // Change or a Fix, and the notice is never a bullet, which is the point.
+    isset( $shipped[ $version ] ) && false === strpos( $shipped[ $version ], 'Headers:' ) && 0 === strpos( $shipped[ $version ], '* ' ) );
 
 echo "\n== every log line carries this plugin's tag ==\n";
 // The updater was copied from bs-maintenance and logged as [BSM] until 0.4.0,

@@ -80,11 +80,28 @@ $hardening_on = count( array_filter(
     Bssec_Plugin::HARDENING_KEYS,
     fn( $key ) => ! empty( $settings[ $key ] )
 ) );
+
+// Tabs. Every panel is always in the page and the three settings panels are
+// always inside the one form, so Save posts every field whichever tab is
+// showing. That is not a nicety: sanitize() reads a missing checkbox as off,
+// so a form that posted only the visible tab would switch the others off.
+// The server picks the open tab, so there is no flash of all four on load;
+// the script switches tabs without a reload and keeps the URL in step.
+$tab        = Bssec_Admin::tab_from( $_GET[ Bssec_Admin::TAB_PARAM ] ?? '' );
+$tab_labels = [
+    'hardening' => __( 'Hardening', 'bs-security' ),
+    'headers'   => __( 'Headers', 'bs-security' ),
+    'csp'       => __( 'Content-Security-Policy', 'bs-security' ),
+    'check'     => __( 'Check', 'bs-security' ),
+];
+/** The attribute that hides every panel but the open one. */
+$panel_hidden = fn( string $slug ): string => $slug === $tab ? '' : ' hidden';
 ?>
 <div class="wrap bssec-wrap">
 
     <div class="bssec-header">
         <h1><?php esc_html_e( 'Biscuit Security', 'bs-security' ); ?></h1>
+        <div class="bssec-pills">
         <span class="bssec-pill <?php echo $on_count ? 'is-on' : 'is-off'; ?>">
             <?php
             printf(
@@ -104,6 +121,7 @@ $hardening_on = count( array_filter(
             );
             ?>
         </span>
+        </div>
     </div>
     <?php // Core moves admin notices to just after this marker. Without it they land inside the header row. ?>
     <hr class="wp-header-end">
@@ -147,9 +165,30 @@ $hardening_on = count( array_filter(
         </div>
     <?php endif; ?>
 
+    <?php
+    // Plain links, so the tabs still work as page loads if the script fails.
+    // The script adds the tablist roles, because they only make sense once
+    // switching a tab hides the others.
+    ?>
+    <nav class="nav-tab-wrapper bssec-tabs" data-bssec-tabs aria-label="<?php esc_attr_e( 'Biscuit Security sections', 'bs-security' ); ?>">
+        <?php foreach ( $tab_labels as $slug => $label ) : ?>
+            <a href="<?php echo esc_url( add_query_arg( [ 'page' => Bssec_Admin::SLUG, Bssec_Admin::TAB_PARAM => $slug ], admin_url( 'options-general.php' ) ) ); ?>"
+                class="nav-tab<?php echo $slug === $tab ? ' nav-tab-active' : ''; ?>"
+                id="bssec-tab-<?php echo esc_attr( $slug ); ?>"
+                data-bssec-tab="<?php echo esc_attr( $slug ); ?>"
+                <?php echo $slug === $tab ? 'aria-current="page"' : ''; ?>><?php echo esc_html( $label ); ?></a>
+        <?php endforeach; ?>
+    </nav>
+
     <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
         <input type="hidden" name="action" value="<?php echo esc_attr( Bssec_Plugin::SAVE_ACTION ); ?>">
         <?php wp_nonce_field( Bssec_Plugin::SAVE_ACTION ); ?>
+        <?php // Which tab to come back to after saving. The script keeps it current. ?>
+        <input type="hidden" name="<?php echo esc_attr( Bssec_Admin::TAB_PARAM ); ?>" value="<?php echo esc_attr( $tab ); ?>">
+
+        <?php // Panels are not indented, so the cards inside keep their place in the diff. ?>
+        <!-- Tab: Hardening ================================================= -->
+        <div class="bssec-panel" id="bssec-panel-hardening" data-bssec-panel="hardening"<?php echo $panel_hidden( 'hardening' ); ?>>
 
         <!-- Hardening ------------------------------------------------------->
         <div class="bssec-card">
@@ -210,6 +249,11 @@ $hardening_on = count( array_filter(
 
             </div>
         </div>
+
+        </div><!-- /Tab: Hardening -->
+
+        <!-- Tab: Headers =================================================== -->
+        <div class="bssec-panel" id="bssec-panel-headers" data-bssec-panel="headers"<?php echo $panel_hidden( 'headers' ); ?>>
 
         <!-- Standard headers ------------------------------------------------>
         <div class="bssec-card">
@@ -309,7 +353,7 @@ $hardening_on = count( array_filter(
                         <span class="bssec-toggle-label"><?php esc_html_e( 'X-Content-Type-Options', 'bs-security' ); ?></span>
                     </label>
                     <p class="bssec-help">
-                        <?php esc_html_e( 'Stops the browser guessing at a file type and running something as a script that was not meant to be one. Off by default because Kinsta and xCloud both already send it, and there is no point two things sending the same header. Switch it on only if the check below, run on the live site, shows it missing.', 'bs-security' ); ?>
+                        <?php esc_html_e( 'Stops the browser guessing at a file type and running something as a script that was not meant to be one. Off by default because Kinsta and xCloud both already send it, and there is no point two things sending the same header. Switch it on only if the Check tab, run on the live site, shows it missing.', 'bs-security' ); ?>
                     </p>
                 </div>
 
@@ -357,6 +401,11 @@ $hardening_on = count( array_filter(
 
             </div>
         </div>
+
+        </div><!-- /Tab: Headers -->
+
+        <!-- Tab: Content-Security-Policy =================================== -->
+        <div class="bssec-panel" id="bssec-panel-csp" data-bssec-panel="csp"<?php echo $panel_hidden( 'csp' ); ?>>
 
         <!-- CSP ------------------------------------------------------------->
         <div class="bssec-card">
@@ -608,8 +657,12 @@ $hardening_on = count( array_filter(
             </div>
         </div>
 
-        <div class="bssec-actions">
+        </div><!-- /Tab: Content-Security-Policy -->
+
+        <?php // Hidden on the Check tab, which has nothing to save. ?>
+        <div class="bssec-actions"<?php echo $panel_hidden( 'check' ) ? '' : ' hidden'; ?>>
             <button type="submit" class="button button-primary button-large"><?php esc_html_e( 'Save changes', 'bs-security' ); ?></button>
+            <span class="bssec-muted"><?php esc_html_e( 'Saves the settings on every tab, not only this one.', 'bs-security' ); ?></span>
         </div>
 
     </form>
@@ -624,6 +677,10 @@ $hardening_on = count( array_filter(
         <input type="hidden" name="action" value="<?php echo esc_attr( Bssec_Plugin::CLEAR_ACTION ); ?>">
         <input type="hidden" name="_wpnonce" value="<?php echo esc_attr( wp_create_nonce( Bssec_Plugin::CLEAR_ACTION ) ); ?>">
     </form>
+
+    <?php // Outside the settings form: nothing here saves, and the check is a link. ?>
+    <!-- Tab: Check ========================================================== -->
+    <div class="bssec-panel" id="bssec-panel-check" data-bssec-panel="check"<?php echo $panel_hidden( 'check' ); ?>>
 
     <!-- What this site sends now --------------------------------------------->
     <div class="bssec-card" id="bssec-server-check">
@@ -734,7 +791,7 @@ $hardening_on = count( array_filter(
         <div class="bssec-card-header"><h2><?php esc_html_e( 'Exactly what this plugin sends', 'bs-security' ); ?></h2></div>
         <div class="bssec-card-body">
             <p class="bssec-help bssec-lede">
-                <?php esc_html_e( 'The saved settings above, rendered as the headers they produce on a front-end page over HTTPS. This is generated by the same code that sends them, so it cannot drift from what actually ships.', 'bs-security' ); ?>
+                <?php esc_html_e( 'The saved settings on the other tabs, rendered as the headers they produce on a front-end page over HTTPS. This is generated by the same code that sends them, so it cannot drift from what actually ships.', 'bs-security' ); ?>
             </p>
             <?php if ( $preview_headers ) : ?>
                 <pre class="bssec-preview"><?php
@@ -747,5 +804,7 @@ $hardening_on = count( array_filter(
             <?php endif; ?>
         </div>
     </div>
+
+    </div><!-- /Tab: Check -->
 
 </div>

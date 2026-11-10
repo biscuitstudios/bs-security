@@ -4,7 +4,7 @@ Tags: security, security headers, hardening, user enumeration, login
 Requires at least: 6.3
 Tested up to: 7.1
 Requires PHP: 8.2
-Stable tag: 0.4.0
+Stable tag: 0.4.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -28,6 +28,19 @@ Replacing Biscuit Security Headers: activate this plugin first, so it copies the
 old header settings, then deactivate and delete Biscuit Security Headers.
 
 == Changelog ==
+
+= 0.4.1 =
+* Change: the settings screen is split into four tabs: Hardening, Headers
+  (the standard headers and HSTS), Content-Security-Policy (the policy and
+  report-only, side by side) and Check (what the site sends now, and exactly
+  what this plugin sends). Save still saves every tab at once, and says so.
+  After saving, checking or clearing reports, the screen comes back to the
+  tab you were on. Without JavaScript the tabs work as ordinary links.
+* Change: the header check no longer lists X-XSS-Protection or Expect-CT.
+  Browsers ignore both, so the two rows only ever read "not sent".
+* Change: the two status pills at the top of the screen sit together on the
+  right.
+* Nothing this plugin sends has changed.
 
 = 0.4.0 =
 * New: the collected CSP reports are listed on the settings screen: one row
@@ -183,6 +196,9 @@ old header settings, then deactivate and delete Biscuit Security Headers.
   reports them if something else on the site is still sending them.
 
 == Upgrade Notice ==
+
+= 0.4.1 =
+Headers: unchanged. Splits Settings > Biscuit Security into four tabs: Hardening, Headers, Content-Security-Policy and Check. Save still saves every tab. The header check drops two retired headers. No setting changes.
 
 = 0.4.0 =
 Headers: unchanged. Adds a list of collected CSP reports, a test report button and Clear reports to Settings > Biscuit Security. Nothing changes on a site that has never switched CSP report-only on.

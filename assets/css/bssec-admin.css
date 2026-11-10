@@ -63,6 +63,14 @@
     font-weight: 600;
     color: var(--bssec-text);
 }
+/* Both pills together on the right. Loose in the header row, space-between
+   put the first one in the middle. */
+.bssec-pills {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
 .bssec-pill {
     flex: none;
     padding: 6px 14px;
@@ -88,6 +96,19 @@
 .bssec-notice.is-success { border-left-color: var(--bssec-success); }
 .bssec-notice.is-error   { border-left-color: var(--bssec-error); }
 .bssec-notice.is-warning { border-left-color: var(--bssec-warning); }
+
+/* Tabs -------------------------------------------------------------------- */
+
+/* Core's nav-tab look, so it reads like any other Settings screen. Only the
+   spacing is ours: core's wrapper has no gap beneath it, and the cards below
+   need one. */
+.bssec-tabs.nav-tab-wrapper { margin: 0 0 var(--bssec-card-gap); }
+.bssec-tabs .nav-tab:first-child { margin-left: 0; }
+.bssec-tabs .nav-tab:focus-visible {
+    box-shadow: 0 0 0 2px var(--bssec-accent);
+    outline: 2px solid transparent;
+}
+.bssec-panel[hidden] { display: none; }
 
 /* Cards ------------------------------------------------------------------- */
 
@@ -414,5 +435,12 @@
 
 /* Actions ----------------------------------------------------------------- */
 
-.bssec-actions { margin: 0 0 var(--bssec-card-gap); }
+.bssec-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+    margin: 0 0 var(--bssec-card-gap);
+}
+.bssec-actions[hidden] { display: none; }
 .bssec-actions .button-large { height: var(--bssec-input-height); padding: 0 24px; }

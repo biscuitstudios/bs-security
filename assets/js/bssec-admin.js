@@ -1,19 +1,95 @@
 /**
  * Biscuit Security — admin screen behaviour.
  *
- * Four jobs: show the options belonging to a switch only while that switch is
- * on, make turning HSTS on take one deliberate extra step, confirm before
- * clearing CSP reports, and send a test CSP report the way a browser would.
+ * Five jobs: switch tabs without a reload, show the options belonging to a
+ * switch only while that switch is on, make turning HSTS on take one
+ * deliberate extra step, confirm before clearing CSP reports, and send a test
+ * CSP report the way a browser would.
  *
  * No jQuery. Nothing here is required for the form to work — every dependent
  * block renders with its correct hidden state from PHP, and the fields inside
  * a hidden block still submit — so a scripting failure degrades to "everything
- * is visible" rather than to a broken screen.
+ * is visible" rather than to a broken screen. The tabs degrade to plain links,
+ * one page load per tab, with the open tab chosen by PHP.
  */
 ( function () {
     'use strict';
 
     var strings = window.bssecAdmin || {};
+
+    // Tabs. PHP has already hidden every panel but the open one; this only
+    // swaps which one shows, and keeps three things in step with it: the URL,
+    // so a reload stays put; the form's tab field, so Save comes back here;
+    // and the Save button, which the Check tab has no use for. Hidden panels
+    // stay inside the form, so their fields still submit.
+    var tabList = document.querySelector( '[data-bssec-tabs]' );
+    if ( tabList ) {
+        var tabs     = Array.prototype.slice.call( tabList.querySelectorAll( '[data-bssec-tab]' ) );
+        var tabField = document.querySelector( 'input[name="bssec-tab"]' );
+        var actions  = document.querySelector( '.bssec-actions' );
+
+        var panelFor = function ( tab ) {
+            return document.getElementById( 'bssec-panel-' + tab.getAttribute( 'data-bssec-tab' ) );
+        };
+
+        var select = function ( tab, focus ) {
+            var name = tab.getAttribute( 'data-bssec-tab' );
+            tabs.forEach( function ( other ) {
+                var on    = other === tab;
+                var panel = panelFor( other );
+                other.classList.toggle( 'nav-tab-active', on );
+                other.setAttribute( 'aria-selected', on ? 'true' : 'false' );
+                other.tabIndex = on ? 0 : -1;
+                if ( panel ) panel.hidden = ! on;
+            } );
+            if ( tabField ) tabField.value = name;
+            if ( actions ) actions.hidden = 'check' === name;
+            if ( window.history && window.history.replaceState ) {
+                // The hash belonged to the tab being left (#bssec-report-only
+                // after a test report, say), so it goes too.
+                var url = new URL( window.location.href );
+                url.searchParams.set( 'bssec-tab', name );
+                url.hash = '';
+                window.history.replaceState( null, '', url.toString() );
+            }
+            if ( focus ) tab.focus();
+        };
+
+        tabList.setAttribute( 'role', 'tablist' );
+        tabs.forEach( function ( tab ) {
+            var panel = panelFor( tab );
+            var on    = tab.classList.contains( 'nav-tab-active' );
+            tab.setAttribute( 'role', 'tab' );
+            tab.removeAttribute( 'aria-current' );
+            tab.setAttribute( 'aria-selected', on ? 'true' : 'false' );
+            tab.tabIndex = on ? 0 : -1;
+            if ( panel ) {
+                tab.setAttribute( 'aria-controls', panel.id );
+                panel.setAttribute( 'role', 'tabpanel' );
+                panel.setAttribute( 'aria-labelledby', tab.id );
+            }
+            tab.addEventListener( 'click', function ( event ) {
+                event.preventDefault();
+                select( tab, false );
+            } );
+        } );
+
+        // Arrow keys move between tabs and open them, Home and End jump to
+        // the ends: the keyboard pattern screen reader users expect of a
+        // tablist. Tab itself moves on into the open panel.
+        tabList.addEventListener( 'keydown', function ( event ) {
+            var at = tabs.indexOf( document.activeElement );
+            if ( at < 0 ) return;
+            var to = null;
+            if ( 'ArrowRight' === event.key ) to = ( at + 1 ) % tabs.length;
+            if ( 'ArrowLeft' === event.key )  to = ( at - 1 + tabs.length ) % tabs.length;
+            if ( 'Home' === event.key )       to = 0;
+            if ( 'End' === event.key )        to = tabs.length - 1;
+            if ( null === to ) return;
+            event.preventDefault();
+            select( tabs[ to ], true );
+        } );
+    }
 
     /** Show or hide the block a checkbox controls. */
     function sync( input ) {
@@ -95,6 +171,7 @@
                     next.searchParams.delete( 'bssec-updated' );
                     next.searchParams.delete( 'bssec-cleared' );
                     next.searchParams.set( 'bssec-tested', String( Date.now() ) );
+                    next.searchParams.set( 'bssec-tab', 'csp' );
                     next.hash = 'bssec-report-only';
                     window.location.assign( next.toString() );
                     return;
