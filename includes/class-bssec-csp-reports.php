@@ -255,8 +255,19 @@ class Bssec_Csp_Reports {
         $dropped = [];
         $raw     = [];
 
-        if ( self::TYPE_LEGACY === $type ) {
-            $r = $data['csp-report'] ?? null;
+        // The body's shape decides how it is read, not the Content-Type. The
+        // label and the shape do not match in practice: Safari 27 sends each
+        // report alone, labeled application/csp-report, in the Reporting API
+        // shape ({"type":"csp-violation","body":{...}}) with no csp-report
+        // wrapper and no list around it. Reading by label refused every one of
+        // them as unreadable: 215 requests on biscuitstudios.com, and all 67
+        // Safari sent to Local, November 9, 2026. Three shapes are accepted,
+        // under either content type:
+        //   {"csp-report": {...}}             the legacy report-uri format
+        //   [ {"type": ..., "body": {...}} ]  a Reporting API batch (Chrome)
+        //   {"type": ..., "body": {...}}      one Reporting API report alone (Safari)
+        if ( array_key_exists( 'csp-report', $data ) ) {
+            $r = $data['csp-report'];
             if ( ! is_array( $r ) ) return null;
             $raw[] = [
                 'document'    => $r['document-uri'] ?? '',
@@ -268,7 +279,12 @@ class Bssec_Csp_Reports {
                 'source'      => $r['source-file'] ?? '',
             ];
         } else {
-            if ( ! array_is_list( $data ) ) return null;
+            if ( ! array_is_list( $data ) ) {
+                // A single report object, as Safari sends it. Anything else
+                // that is neither a list nor a report is not a report.
+                if ( ! array_key_exists( 'type', $data ) && ! array_key_exists( 'body', $data ) ) return null;
+                $data = [ $data ];
+            }
             foreach ( $data as $item ) {
                 if ( ! is_array( $item ) || 'csp-violation' !== ( $item['type'] ?? '' ) || ! is_array( $item['body'] ?? null ) ) {
                     $dropped['not_csp'] = ( $dropped['not_csp'] ?? 0 ) + 1;
@@ -422,7 +438,12 @@ class Bssec_Csp_Reports {
         if ( ! in_array( $scheme, [ 'http', 'https', 'ws', 'wss' ], true ) ) return '';
         if ( '' === $host || strlen( $host ) > 253 || ! preg_match( '/^[a-z0-9.-]+$/', $host ) ) return '';
 
-        $port = isset( $parts['port'] ) ? ':' . (int) $parts['port'] : '';
+        // Drop a port that is the scheme's default. Safari 27 writes
+        // https://example.com:443/... where Chrome writes https://example.com/...,
+        // and keeping it would store one site as two sources.
+        $port     = isset( $parts['port'] ) ? (int) $parts['port'] : 0;
+        $defaults = [ 'http' => 80, 'https' => 443, 'ws' => 80, 'wss' => 443 ];
+        $port     = ( $port && $port !== $defaults[ $scheme ] ) ? ':' . $port : '';
         return $scheme . '://' . $host . $port;
     }
 

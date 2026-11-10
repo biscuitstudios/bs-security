@@ -224,10 +224,47 @@ echo "\n== bodies that are not reports at all ==\n";
 it( 'not JSON',                          null === parse( 'not json' ) );
 it( 'JSON but not an object',            null === parse( '"a string"' ) );
 it( 'legacy without csp-report',         null === parse( json_encode( [ 'something' => [] ] ) ) );
-it( 'Reporting API as an object, not a list', null === parse( json_encode( [ 'type' => 'csp-violation' ] ), BATCH ) );
+// Until 0.3.2 this said a lone object must be refused. Safari sends exactly
+// that, so a lone object is now one report; with no body it counts as not_csp.
+it( 'a lone report object with no body is read as one report and counted not_csp',
+    ( fn( $p ) => is_array( $p ) && [] === $p['rows'] && 1 === ( $p['dropped']['not_csp'] ?? 0 ) )(
+        parse( json_encode( [ 'type' => 'csp-violation' ] ), BATCH ) ) );
 it( 'nested deeper than any report is', null === parse( str_repeat( '[', 20 ) . str_repeat( ']', 20 ), BATCH ) );
-it( 'a legacy body sent as the batch type is refused',
-    null === parse( legacy( [] ), BATCH ) );
+it( 'the shape decides, not the label: a legacy body under the batch type is read',
+    1 === count( parse( legacy( [] ), BATCH )['rows'] ?? [] ) );
+it( 'an object that is neither a legacy report nor a report is still refused',
+    null === parse( json_encode( [ 'hello' => 'world' ] ), BATCH ) );
+
+echo "\n== Safari 27: one Reporting API report alone, labeled as legacy ==\n";
+// Captured from Safari 27.0.1 on Local Biscuit Dev, November 9, 2026, with the
+// host changed. All 67 of its requests looked like this, and 0.3.1 refused
+// every one as unreadable because it read by the label.
+$safari_data = '{"type":"csp-violation","url":"https://shop.test/","body":{"documentURL":"https://shop.test/","disposition":"report","referrer":"","effectiveDirective":"img-src","blockedURL":"data","originalPolicy":"img-src \'none\'; report-uri https://shop.test/wp-json/bssec/v1/csp-report; report-to bssec","statusCode":200,"sample":""}}';
+$safari_url  = '{"type":"csp-violation","url":"https://shop.test/work/","body":{"documentURL":"https://shop.test/work/","disposition":"report","referrer":"","effectiveDirective":"img-src","blockedURL":"https://shop.test:443/wp-content/uploads/2026/10/hero.jpg","originalPolicy":"img-src \'none\'","statusCode":200,"sample":""}}';
+$sd = parse( $safari_data, LEGACY );
+it( 'is read', 1 === count( $sd['rows'] ?? [] ) );
+it( 'its bare "data" becomes data:', 'data:' === ( $sd['rows'][0]['blocked'] ?? '' ) );
+it( 'its directive is img-src', 'img-src' === ( $sd['rows'][0]['directive'] ?? '' ) );
+$su = parse( $safari_url, LEGACY );
+it( 'a Safari address with :443 is stored without it',
+    'https://shop.test' === ( $su['rows'][0]['blocked'] ?? '' ) );
+it( 'so Safari and Chrome reporting the same image give the same key',
+    ( $su['rows'][0]['report_key'] ?? 'a' ) === ( parse( json_encode( [ item( [ 'blockedURL' => 'https://shop.test/wp-content/uploads/2026/10/hero.jpg' ] ) ] ), BATCH )['rows'][0]['report_key'] ?? 'b' ) );
+it( 'the same body under the batch type reads the same',
+    $sd['rows'] === ( parse( $safari_data, BATCH )['rows'] ?? null ) );
+
+echo "\n== default ports are dropped, others kept ==\n";
+foreach ( [
+    'https://a.test:443/x' => 'https://a.test',
+    'http://a.test:80/x'   => 'http://a.test',
+    'wss://a.test:443/x'   => 'wss://a.test',
+    'ws://a.test:80/x'     => 'ws://a.test',
+    'https://a.test:80/x'  => 'https://a.test:80',
+    'http://a.test:443/x'  => 'http://a.test:443',
+    'https://a.test:8443/' => 'https://a.test:8443',
+] as $in => $want ) {
+    it( "'$in' -> '$want'", $want === Bssec_Csp_Reports::origin_of( $in ) );
+}
 
 echo "\n== the batch limit ==\n";
 $big = parse( json_encode( array_map( fn( $i ) => item( [ 'blockedURL' => "https://h$i.example/" ] ), range( 1, 14 ) ) ), BATCH );

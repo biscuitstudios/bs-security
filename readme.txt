@@ -4,7 +4,7 @@ Tags: security, security headers, hardening, user enumeration, login
 Requires at least: 6.3
 Tested up to: 7.1
 Requires PHP: 8.2
-Stable tag: 0.3.1
+Stable tag: 0.3.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -28,6 +28,16 @@ Replacing Biscuit Security Headers: activate this plugin first, so it copies the
 old header settings, then deactivate and delete Biscuit Security Headers.
 
 == Changelog ==
+
+= 0.3.2 =
+* Fix: CSP reports from Safari were all refused as unreadable. Safari sends
+  each report on its own, labeled as the older report format but written in
+  the newer one. Reports are now read by their shape rather than their label,
+  so the older format, a newer-format list (Chrome) and a single newer-format
+  report (Safari) are all accepted.
+* Fix: Safari writes the default port into addresses (https://example.com:443)
+  where Chrome does not. Default ports are now dropped, so one site is one
+  source whichever browser reported it.
 
 = 0.3.1 =
 * Fix: CSP reports from Chrome were mostly refused. Chrome bundles every
