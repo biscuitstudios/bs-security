@@ -83,8 +83,13 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           NOTES="$RUNNER_TEMP/release-notes.md"
+          # Only inside "== Changelog ==". The "== Upgrade Notice ==" section
+          # repeats the same "= x.y.z =" headings, and without the section
+          # check its line would be copied into the changelog too.
           awk -v want="= $TAG =" '
             { line = $0; sub( /[[:space:]]+$/, "", line ) }
+            line ~ /^== /     { inlog = ( line == "== Changelog ==" ); copy = 0; next }
+            !inlog            { next }
             line == want      { copy = 1; next }
             line ~ /^= [0-9]/ { copy = 0 }
             copy              { print }
@@ -97,6 +102,41 @@ jobs:
             echo "Write the entry before tagging. That section becomes the release body, and the release body is the changelog every site reads." >&2
             exit 1
           fi
+
+          # "Tested up to" and the upgrade notice, the two fields an update
+          # offer carries besides the zip. A site learns about a release only
+          # from this body, so Bssec_Updater::release_meta() reads them back
+          # out of these two lines. The notice must say whether the release
+          # touches the headers, so an update report can sort releases by what
+          # they do. Asked for by the session tracking plugin updates,
+          # November 10, 2026.
+          TESTED="$(awk '/^Tested up to:/ { sub( /^Tested up to:[[:space:]]*/, "" ); sub( /[[:space:]]+$/, "" ); print; exit }' readme.txt)"
+          NOTICE="$(awk -v want="= $TAG =" '
+            { line = $0; sub( /[[:space:]]+$/, "", line ) }
+            line ~ /^== /       { insec = ( line == "== Upgrade Notice ==" ); copy = 0; next }
+            !insec              { next }
+            line == want        { copy = 1; next }
+            line ~ /^= [0-9]/   { copy = 0 }
+            copy && line != ""  { printf "%s%s", sep, line; sep = " " }
+          ' readme.txt)"
+          if ! printf '%s' "$TESTED" | grep -qE '^[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+            echo "readme.txt has no usable 'Tested up to:' line (found '$TESTED')." >&2
+            exit 1
+          fi
+          case "$NOTICE" in
+            "Headers: changed."*|"Headers: unchanged."*) ;;
+            *)
+              echo "readme.txt has no '= $TAG =' entry under '== Upgrade Notice ==', or it does not start with 'Headers: changed.' or 'Headers: unchanged.' (found '$NOTICE')." >&2
+              echo "Every release says whether it touches the headers, so an update report can sort it. One line, under 300 characters." >&2
+              exit 1
+              ;;
+          esac
+          if [ "${#NOTICE}" -gt 300 ]; then
+            echo "The '= $TAG =' upgrade notice is ${#NOTICE} characters; keep it to 300." >&2
+            exit 1
+          fi
+          printf '\nTested up to: %s\n\nUpgrade notice: %s\n' "$TESTED" "$NOTICE" >> "$NOTES"
+
           echo "Release notes for $TAG:"
           cat "$NOTES"
 

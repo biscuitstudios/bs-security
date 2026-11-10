@@ -74,6 +74,16 @@ class Bssec_Csp_Reports {
         'require-trusted-types-for', 'trusted-types', 'webrtc',
     ];
 
+    /**
+     * The directive the screen's "Send a test report" button uses.
+     *
+     * Not a CSP directive, so no browser ever sends it. Kept out of the
+     * source count and the main table, and shown on its own line, so a test
+     * never reads as a violation. Anyone can forge it, as they can any
+     * report; it is one row with a count, under the same limits.
+     */
+    public const TEST_DIRECTIVE = 'bssec-test';
+
     /** What browsers report in place of a URL for inline code and the like. */
     public const KEYWORDS = [ 'inline', 'eval', 'wasm-eval', 'trusted-types-policy', 'trusted-types-sink' ];
 
@@ -369,7 +379,7 @@ class Bssec_Csp_Reports {
         }
 
         $directive = strtolower( (string) strtok( $str( $r['directive'] ?? '' ), " \t" ) );
-        if ( ! in_array( $directive, self::DIRECTIVES, true ) ) {
+        if ( ! in_array( $directive, self::DIRECTIVES, true ) && self::TEST_DIRECTIVE !== $directive ) {
             return [ 'drop' => 'unknown_directive' ];
         }
 
@@ -651,12 +661,14 @@ class Bssec_Csp_Reports {
      * how much has been refused.
      *
      * `dropped_by` is reason => count, largest first, known reasons only.
+     * `rows` and `last` leave out the screen's test reports, which have their
+     * own `test_last`, so pressing the test button never reads as traffic.
      *
-     * @return array{table: bool, rows: int, last: string, dropped: int, dropped_by: array<string,int>, since: string}
+     * @return array{table: bool, rows: int, last: string, test_last: string, dropped: int, dropped_by: array<string,int>, since: string, last_prune: string}
      */
     public static function summary(): array {
         global $wpdb;
-        $out = [ 'table' => false, 'rows' => 0, 'last' => '', 'dropped' => 0, 'dropped_by' => [], 'since' => '' ];
+        $out = [ 'table' => false, 'rows' => 0, 'last' => '', 'test_last' => '', 'dropped' => 0, 'dropped_by' => [], 'since' => '', 'last_prune' => '' ];
         if ( ! self::table_exists() ) return $out;
 
         $table = self::table();
@@ -666,12 +678,78 @@ class Bssec_Csp_Reports {
         arsort( $by );
 
         $out['table']      = true;
-        $out['rows']       = (int) $wpdb->get_var( "SELECT COUNT(*) FROM $table" );
-        $out['last']       = (string) $wpdb->get_var( "SELECT MAX(last_seen) FROM $table" );
+        $out['rows']       = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM $table WHERE directive <> %s", self::TEST_DIRECTIVE ) );
+        $out['last']       = (string) $wpdb->get_var( $wpdb->prepare( "SELECT MAX(last_seen) FROM $table WHERE directive <> %s", self::TEST_DIRECTIVE ) );
+        $out['test_last']  = (string) $wpdb->get_var( $wpdb->prepare( "SELECT MAX(last_seen) FROM $table WHERE directive = %s", self::TEST_DIRECTIVE ) );
         $out['dropped']    = array_sum( $by );
         $out['dropped_by'] = $by;
         $out['since']      = $stats['since'];
+        $out['last_prune'] = $stats['last_prune'];
         return $out;
+    }
+
+    /**
+     * Every stored row, most reported first, for the settings screen.
+     *
+     * Bounded by the row cap, so there is never more than ROW_CAP to render.
+     * Test reports are included; the screen shows them apart.
+     *
+     * @return array<int,array{directive:string,blocked:string,sample_page:string,sample_source:string,hits:int,first_seen:string,last_seen:string}>
+     */
+    public static function rows(): array {
+        global $wpdb;
+        if ( ! self::table_exists() ) return [];
+
+        $table = self::table();
+        $rows  = $wpdb->get_results( $wpdb->prepare(
+            "SELECT directive, blocked, sample_page, sample_source, hits, first_seen, last_seen
+             FROM $table ORDER BY hits DESC, last_seen DESC LIMIT %d",
+            self::ROW_CAP
+        ), ARRAY_A );
+
+        // Cast once where the rows are read: $wpdb hands back strings, and an
+        // empty column can come back as null (THEME-RULES.md, get_col()).
+        return array_map( fn( $r ) => [
+            'directive'     => (string) ( $r['directive'] ?? '' ),
+            'blocked'       => (string) ( $r['blocked'] ?? '' ),
+            'sample_page'   => (string) ( $r['sample_page'] ?? '' ),
+            'sample_source' => (string) ( $r['sample_source'] ?? '' ),
+            'hits'          => (int) ( $r['hits'] ?? 0 ),
+            'first_seen'    => (string) ( $r['first_seen'] ?? '' ),
+            'last_seen'     => (string) ( $r['last_seen'] ?? '' ),
+        ], is_array( $rows ) ? $rows : [] );
+    }
+
+    /**
+     * Empty the table and restart the refusal counts. Returns rows removed.
+     *
+     * DELETE rather than TRUNCATE: TRUNCATE needs the DROP privilege, which a
+     * host's database user does not always have, and on 500 rows the
+     * difference is nothing. The counts restart with a new "since" date, so
+     * the screen never shows refusals from before the reports it lists. The
+     * last prune time is kept, because it is about the cron, not the data.
+     */
+    public static function clear(): int {
+        global $wpdb;
+        $removed = 0;
+        if ( self::table_exists() ) {
+            $table   = self::table();
+            $removed = (int) $wpdb->query( "DELETE FROM $table" );
+        }
+
+        $stats = self::stats();
+        update_option( self::STATS_OPTION, [
+            'since'      => gmdate( 'Y-m-d H:i:s' ),
+            'dropped'    => [],
+            'last_prune' => $stats['last_prune'],
+        ], false );
+
+        return $removed;
+    }
+
+    /** When the prune event will next fire, or 0 if it is not scheduled. */
+    public static function next_prune(): int {
+        return (int) wp_next_scheduled( self::PRUNE_HOOK );
     }
 
     /** @return array{since: string, dropped: array<string,int>, last_prune: string} */

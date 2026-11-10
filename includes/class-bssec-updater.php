@@ -94,6 +94,11 @@ class Bssec_Updater {
         'icons'        => $this->icons(),
             'requires'     => isset( $plugin_data['RequiresWP'] ) ? $plugin_data['RequiresWP'] : '',
             'requires_php' => isset( $plugin_data['RequiresPHP'] ) ? $plugin_data['RequiresPHP'] : '',
+            // Both read from the release body; see release_meta(). Empty for a
+            // release published before 0.4.0, and for a cache entry written by
+            // an older copy of this class.
+            'tested'         => (string) ( $release['tested'] ?? '' ),
+            'upgrade_notice' => (string) ( $release['upgrade_notice'] ?? '' ),
         ];
     }
 
@@ -142,6 +147,7 @@ class Bssec_Updater {
         $info->homepage      = $data['PluginURI'];
         $info->requires      = $data['RequiresWP'];
         $info->requires_php  = $data['RequiresPHP'];
+        $info->tested        = (string) ( $release['tested'] ?? '' );
         $info->download_link = $release['package'];
         $info->icons         = $this->icons();
         $info->last_updated  = $release['published'];
@@ -241,7 +247,7 @@ class Bssec_Updater {
         );
 
         if ( is_wp_error( $response ) ) {
-            error_log( '[BSM] Update check failed: ' . $response->get_error_message() );
+            error_log( '[BSSEC] Update check failed: ' . $response->get_error_message() );
 
             return null;
         }
@@ -251,7 +257,7 @@ class Bssec_Updater {
         if ( 200 !== $code ) {
             // 403 here is almost always the unauthenticated rate limit rather
             // than a permissions problem, and it clears on its own.
-            error_log( '[BSM] Update check failed: HTTP ' . $code . ' from ' . self::REPO );
+            error_log( '[BSSEC] Update check failed: HTTP ' . $code . ' from ' . self::REPO );
 
             return null;
         }
@@ -259,7 +265,7 @@ class Bssec_Updater {
         $body = json_decode( wp_remote_retrieve_body( $response ), true );
 
         if ( ! is_array( $body ) || [] === $body ) {
-            error_log( '[BSM] Update check failed: no releases listed for ' . self::REPO );
+            error_log( '[BSSEC] Update check failed: no releases listed for ' . self::REPO );
 
             return null;
         }
@@ -280,14 +286,15 @@ class Bssec_Updater {
             $log[] = [
                 'version'   => $version,
                 'published' => (string) ( $entry['published_at'] ?? '' ),
-                'notes'     => self::strip_compare_link( (string) ( $entry['body'] ?? '' ) ),
+                'meta'      => self::release_meta( (string) ( $entry['body'] ?? '' ) ),
+                'notes'     => self::strip_meta_lines( self::strip_compare_link( (string) ( $entry['body'] ?? '' ) ) ),
                 'url'       => (string) ( $entry['html_url'] ?? '' ),
                 'assets'    => is_array( $entry['assets'] ?? null ) ? $entry['assets'] : [],
             ];
         }
 
         if ( [] === $log ) {
-            error_log( '[BSM] Update check failed: no usable release tags for ' . self::REPO );
+            error_log( '[BSSEC] Update check failed: no usable release tags for ' . self::REPO );
 
             return null;
         }
@@ -303,7 +310,7 @@ class Bssec_Updater {
         // "Source code (zip)" is not an asset, which is the outcome we want:
         // that archive is the repo, not the built plugin.
         if ( '' === $package ) {
-            error_log( '[BSM] Update check failed: release v' . $latest['version'] . ' has no zip asset.' );
+            error_log( '[BSSEC] Update check failed: release v' . $latest['version'] . ' has no zip asset.' );
 
             return null;
         }
@@ -313,11 +320,13 @@ class Bssec_Updater {
         $log       = array_slice( $log, 0, self::MAX_RELEASES );
 
         foreach ( array_keys( $log ) as $i ) {
-            unset( $log[ $i ]['assets'] );
+            unset( $log[ $i ]['assets'], $log[ $i ]['meta'] );
         }
 
         return [
-            'version'      => $latest['version'],
+            'version'        => $latest['version'],
+            'tested'         => $latest['meta']['tested'],
+            'upgrade_notice' => $latest['meta']['upgrade_notice'],
             'package'      => $package,
             'url'          => $latest['url'],
             'published'    => $latest['published'],
@@ -458,6 +467,57 @@ class Bssec_Updater {
      */
     private static function strip_compare_link( $notes ) {
         return (string) preg_replace( '/\s*\*\*Full Changelog\*\*:\s*\S+\s*$/', '', $notes );
+    }
+
+    /**
+     * "Tested up to" and the upgrade notice, read from a release body.
+     *
+     * A site learns about a new version only from its GitHub release, so the
+     * two fields an update offer carries besides the zip have to travel in the
+     * body. release.yml writes them there from readme.txt, as two plain lines:
+     *
+     *   Tested up to: 7.1
+     *   Upgrade notice: Headers: unchanged. Adds ...
+     *
+     * Before 0.4.0 the offer carried neither, so an update report could see
+     * that a version changed but not what changed or whether it touched the
+     * headers. Asked for by the session that tracks plugin updates,
+     * November 10, 2026.
+     *
+     * Plain lines rather than hidden markup, so the release page shows exactly
+     * what sites are told. Anything not matching is left empty rather than
+     * guessed. The notice is reduced to plain text and 300 characters, the
+     * limit wordpress.org sets, because core prints it on Dashboard > Updates.
+     *
+     * @return array{tested: string, upgrade_notice: string}
+     */
+    public static function release_meta( $body ) {
+        $body   = (string) $body;
+        $tested = '';
+        $notice = '';
+
+        if ( preg_match( '/^Tested up to:[ \t]*([0-9]+\.[0-9]+(?:\.[0-9]+)?)[ \t]*$/mi', $body, $m ) ) {
+            $tested = $m[1];
+        }
+
+        if ( preg_match( '/^Upgrade notice:[ \t]*(\S.*?)[ \t]*$/mi', $body, $m ) ) {
+            $notice = trim( (string) preg_replace( '/\s+/', ' ', strip_tags( $m[1] ) ) );
+            // A backstop: release.yml refuses a notice over 300 characters.
+            // Three ASCII dots, so a cut can never split a multibyte one.
+            if ( strlen( $notice ) > 300 ) {
+                $notice = rtrim( substr( $notice, 0, 297 ) ) . '...';
+            }
+        }
+
+        return [ 'tested' => $tested, 'upgrade_notice' => $notice ];
+    }
+
+    /**
+     * Removes those two lines from notes shown in the details modal, where
+     * the version heading and core's own "Tested up to" row already say it.
+     */
+    public static function strip_meta_lines( $notes ) {
+        return trim( (string) preg_replace( '/^(?:Tested up to|Upgrade notice):[^\n]*\R?/mi', '', (string) $notes ) );
     }
 
     /**

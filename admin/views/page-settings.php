@@ -28,7 +28,35 @@ $report_url = $ro_active ? rest_url( Bssec_Headers::REPORT_ROUTE ) : '';
 $ro_until   = (string) ( $settings['csp_report_only_until'] ?? '' );
 $ro_until_d = DateTimeImmutable::createFromFormat( '!Y-m-d', $ro_until );
 $ro_until_h = $ro_until_d ? $ro_until_d->format( 'F j, Y' ) : '';
-$ro_summary = $ro_on ? Bssec_Csp_Reports::summary() : null;
+// Read whenever the table exists, not only while collecting: the rows outlive
+// the switch until "Clear reports", and reading them is the point.
+$ro_summary = Bssec_Csp_Reports::summary();
+$ro_all     = $ro_summary['table'] ? Bssec_Csp_Reports::rows() : [];
+$ro_test    = null;
+$ro_rows    = [];
+foreach ( $ro_all as $ro_row ) {
+    if ( Bssec_Csp_Reports::TEST_DIRECTIVE === $ro_row['directive'] ) {
+        $ro_test = $ro_row;
+    } else {
+        $ro_rows[] = $ro_row;
+    }
+}
+$ro_show    = $ro_on || $ro_rows || $ro_test || $ro_summary['dropped'] > 0;
+$ro_next    = $ro_on ? Bssec_Csp_Reports::next_prune() : 0;
+$ro_tested  = isset( $_GET['bssec-tested'] );
+$ro_cleared = isset( $_GET['bssec-cleared'] ) ? absint( wp_unslash( $_GET['bssec-cleared'] ) ) : null;
+
+/** A stored UTC datetime as a timestamp, or 0 when empty or unreadable. */
+$ro_ts = function ( string $utc ): int {
+    if ( '' === $utc ) return 0;
+    $d = DateTimeImmutable::createFromFormat( 'Y-m-d H:i:s', $utc, new DateTimeZone( 'UTC' ) );
+    return $d ? $d->getTimestamp() : 0;
+};
+/** A stored UTC datetime as a day in the site's timezone: November 9, 2026. */
+$ro_day = function ( string $utc ) use ( $ro_ts ): string {
+    $ts = $ro_ts( $utc );
+    return $ts ? ( new DateTimeImmutable( '@' . $ts ) )->setTimezone( wp_timezone() )->format( 'F j, Y' ) : '';
+};
 
 // What build() would emit for a normal front-end page view right now. Shown
 // verbatim so the screen never describes something different from what ships.
@@ -56,7 +84,7 @@ $hardening_on = count( array_filter(
 <div class="wrap bssec-wrap">
 
     <div class="bssec-header">
-        <h1><?php esc_html_e( 'Security', 'bs-security' ); ?></h1>
+        <h1><?php esc_html_e( 'Biscuit Security', 'bs-security' ); ?></h1>
         <span class="bssec-pill <?php echo $on_count ? 'is-on' : 'is-off'; ?>">
             <?php
             printf(
@@ -88,6 +116,23 @@ $hardening_on = count( array_filter(
         <div class="bssec-notice is-error">
             <p><?php esc_html_e( 'The Content-Security-Policy was left off: write a policy in the box first. An empty policy sends no header at all.', 'bs-security' ); ?></p>
         </div>
+    <?php endif; ?>
+
+    <?php
+    // Up here with the other notices, not in the report card: after a clear
+    // with collection off there is nothing left to show in the card, and the
+    // first version put this message inside it, where it never appeared.
+    if ( null !== $ro_cleared ) :
+        ?>
+        <div class="bssec-notice is-success"><p>
+            <?php
+            printf(
+                /* translators: %d: number of rows deleted */
+                esc_html( _n( 'CSP reports cleared: %d row deleted. The refused counts start again from now.', 'CSP reports cleared: %d rows deleted. The refused counts start again from now.', $ro_cleared, 'bs-security' ) ),
+                (int) $ro_cleared
+            );
+            ?>
+        </p></div>
     <?php endif; ?>
 
     <?php if ( in_array( 'noreportonly', $notices, true ) ) : ?>
@@ -392,12 +437,30 @@ $hardening_on = count( array_filter(
                     </div>
                 </div>
 
-                <?php if ( $ro_on && $ro_summary ) : ?>
+                <?php if ( $ro_show ) : ?>
                     <div class="bssec-field bssec-report-only-status">
+
+                        <?php
+                        // The test button reloads here after a 204. A 204 alone does not
+                        // mean stored (refused reports get one too), so look for the row.
+                        if ( $ro_tested ) :
+                            $test_ts = $ro_test ? $ro_ts( $ro_test['last_seen'] ) : 0;
+                            if ( $test_ts && time() - $test_ts <= 120 ) :
+                                ?>
+                                <div class="bssec-notice is-success"><p><?php esc_html_e( 'Test report received and stored. It went through the same path a visitor\'s browser uses: no login, the host\'s firewall, and the REST API.', 'bs-security' ); ?></p></div>
+                            <?php else : ?>
+                                <div class="bssec-notice is-error"><p><?php esc_html_e( 'The report address accepted the test report but did not store it. The refused counts below say why.', 'bs-security' ); ?></p></div>
+                            <?php
+                            endif;
+                        endif;
+                        ?>
+
                         <p class="bssec-help">
                             <strong>
                             <?php
-                            if ( $ro_active ) {
+                            if ( ! $ro_on ) {
+                                esc_html_e( 'Collection is off. The reports below were collected earlier.', 'bs-security' );
+                            } elseif ( $ro_active ) {
                                 /* translators: %s: a date such as December 9, 2026 */
                                 printf( esc_html__( 'Collecting until %s.', 'bs-security' ), esc_html( $ro_until_h ) );
                             } else {
@@ -407,7 +470,7 @@ $hardening_on = count( array_filter(
                             ?>
                             </strong>
                         </p>
-                        <?php if ( ! $ro_summary['table'] ) : ?>
+                        <?php if ( $ro_on && ! $ro_summary['table'] ) : ?>
                             <p class="bssec-help"><?php esc_html_e( 'The reports table is missing, so nothing is being stored. Save this screen to create it.', 'bs-security' ); ?></p>
                         <?php else : ?>
                             <p class="bssec-help">
@@ -445,8 +508,99 @@ $hardening_on = count( array_filter(
                                 ?>
                             </p>
                         <?php endif; ?>
+
+                        <?php
+                        // The cron canary (PLUGIN_PRIMER.md, "Scheduled tasks"). WP-Cron
+                        // only fires on traffic and has no queue screen, so a stalled
+                        // clean-up would otherwise be invisible. The row cap still holds
+                        // either way; this is about stale rows, not a growing table.
+                        if ( $ro_on && $ro_summary['table'] ) :
+                            if ( ! $ro_next ) :
+                                ?>
+                                <p class="bssec-help bssec-warn"><?php esc_html_e( 'The daily clean-up is not scheduled. Saving this screen schedules it.', 'bs-security' ); ?></p>
+                            <?php elseif ( $ro_next < time() - HOUR_IN_SECONDS ) : ?>
+                                <p class="bssec-help bssec-warn">
+                                    <?php
+                                    printf(
+                                        /* translators: %s: a span of time such as 2 days */
+                                        esc_html__( 'The daily clean-up is overdue by %s, so WP-Cron may not be running on this site. Old reports are not being removed, but the 500-row limit still holds.', 'bs-security' ),
+                                        esc_html( human_time_diff( $ro_next ) )
+                                    );
+                                    ?>
+                                </p>
+                            <?php
+                            endif;
+                        endif;
+                        ?>
+
                         <?php if ( $ro_active ) : ?>
                             <p class="bssec-help"><?php esc_html_e( 'Reports go to', 'bs-security' ); ?> <code><?php echo esc_html( $report_url ); ?></code></p>
+                            <p class="bssec-report-only-test">
+                                <button type="button" class="button"
+                                    data-bssec-test-url="<?php echo esc_url( $report_url ); ?>"
+                                    data-bssec-test-page="<?php echo esc_url( home_url( '/' ) ); ?>">
+                                    <?php esc_html_e( 'Send a test report', 'bs-security' ); ?>
+                                </button>
+                                <?php if ( $ro_test ) : ?>
+                                    <span class="bssec-muted">
+                                        <?php
+                                        printf(
+                                            /* translators: %s: a span of time such as 5 minutes */
+                                            esc_html__( 'Last test report %s ago.', 'bs-security' ),
+                                            esc_html( human_time_diff( $ro_ts( $ro_test['last_seen'] ) ) )
+                                        );
+                                        ?>
+                                    </span>
+                                <?php endif; ?>
+                            </p>
+                            <p class="bssec-help" id="bssec-test-result" role="status" aria-live="polite" hidden></p>
+                            <p class="bssec-help"><?php esc_html_e( 'Sends one report the way a visitor\'s browser does, with no login, and shows whether it got through and was stored. Use it after setting up a site, and whenever the counts above look wrong.', 'bs-security' ); ?></p>
+                        <?php endif; ?>
+
+                        <?php if ( $ro_rows ) : ?>
+                            <p class="bssec-help">
+                                <?php esc_html_e( 'One row per directive and blocked source, most reported first. Anyone can send a report, so a source reported only once is not evidence that it belongs in the policy. Those rows are greyed.', 'bs-security' ); ?>
+                            </p>
+                            <table class="bssec-table bssec-reports">
+                                <thead>
+                                    <tr>
+                                        <th scope="col"><?php esc_html_e( 'Directive', 'bs-security' ); ?></th>
+                                        <th scope="col"><?php esc_html_e( 'Blocked', 'bs-security' ); ?></th>
+                                        <th scope="col"><?php esc_html_e( 'Reports', 'bs-security' ); ?></th>
+                                        <th scope="col"><?php esc_html_e( 'First seen', 'bs-security' ); ?></th>
+                                        <th scope="col"><?php esc_html_e( 'Last seen', 'bs-security' ); ?></th>
+                                        <th scope="col"><?php esc_html_e( 'Sample page', 'bs-security' ); ?></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                <?php foreach ( $ro_rows as $ro_row ) : ?>
+                                    <tr class="<?php echo 1 === $ro_row['hits'] ? 'is-faint' : ''; ?>">
+                                        <th scope="row"><code><?php echo esc_html( $ro_row['directive'] ); ?></code></th>
+                                        <td><code><?php echo esc_html( $ro_row['blocked'] ); ?></code></td>
+                                        <td><?php echo esc_html( number_format( $ro_row['hits'] ) ); ?></td>
+                                        <td><?php echo esc_html( $ro_day( $ro_row['first_seen'] ) ); ?></td>
+                                        <td>
+                                            <?php
+                                            $seen = $ro_ts( $ro_row['last_seen'] );
+                                            /* translators: %s: a span of time such as 5 minutes */
+                                            echo $seen ? esc_html( sprintf( __( '%s ago', 'bs-security' ), human_time_diff( $seen ) ) ) : '';
+                                            ?>
+                                        </td>
+                                        <td><code><?php echo esc_html( $ro_row['sample_page'] ); ?></code></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        <?php endif; ?>
+
+                        <?php if ( $ro_rows || $ro_test || $ro_summary['dropped'] > 0 ) : ?>
+                            <p class="bssec-report-only-clear">
+                                <?php // Submits the small form after this one; forms cannot nest. ?>
+                                <button type="submit" form="bssec-clear-form" class="button" data-bssec-clear>
+                                    <?php esc_html_e( 'Clear reports', 'bs-security' ); ?>
+                                </button>
+                                <span class="bssec-muted"><?php esc_html_e( 'Deletes every row above and restarts the refused counts.', 'bs-security' ); ?></span>
+                            </p>
                         <?php endif; ?>
                     </div>
                 <?php endif; ?>
@@ -458,6 +612,17 @@ $hardening_on = count( array_filter(
             <button type="submit" class="button button-primary button-large"><?php esc_html_e( 'Save changes', 'bs-security' ); ?></button>
         </div>
 
+    </form>
+
+    <?php
+    // The Clear reports form. Its own form, so clearing never saves settings
+    // and saving never clears. The nonce is written by hand rather than with
+    // wp_nonce_field(), which would print a second element with the id
+    // "_wpnonce" on the page.
+    ?>
+    <form id="bssec-clear-form" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+        <input type="hidden" name="action" value="<?php echo esc_attr( Bssec_Plugin::CLEAR_ACTION ); ?>">
+        <input type="hidden" name="_wpnonce" value="<?php echo esc_attr( wp_create_nonce( Bssec_Plugin::CLEAR_ACTION ) ); ?>">
     </form>
 
     <!-- What this site sends now --------------------------------------------->

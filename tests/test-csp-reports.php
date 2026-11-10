@@ -315,6 +315,24 @@ it( 'refusals are still counted per report, folded or not',
 it( 'a single legacy report is one row with a count of one',
     1 === ( parse( legacy( [] ) )['rows'][0]['hits'] ?? 0 ) );
 
+echo "\n== the screen's test report (step 4) ==\n";
+// The body the "Send a test report" button posts, built the way the JS does.
+$test_body = json_encode( [ 'csp-report' => [
+    'document-uri'        => 'https://shop.test/',
+    'effective-directive' => Bssec_Csp_Reports::TEST_DIRECTIVE,
+    'blocked-uri'         => 'https://shop.test',
+    'disposition'         => 'report',
+] ] );
+$tp = parse( $test_body );
+it( 'is accepted', 1 === count( $tp['rows'] ?? [] ) );
+it( 'under its own directive', Bssec_Csp_Reports::TEST_DIRECTIVE === ( $tp['rows'][0]['directive'] ?? '' ) );
+it( 'so its key never collides with a real report of the same site',
+    ( $tp['rows'][0]['report_key'] ?? 'a' ) !== ( parse( legacy( [ 'blocked-uri' => 'https://shop.test/x.png' ] ) )['rows'][0]['report_key'] ?? 'a' ) );
+it( 'the test directive is not a real CSP directive',
+    ! in_array( Bssec_Csp_Reports::TEST_DIRECTIVE, Bssec_Csp_Reports::DIRECTIVES, true ) );
+it( 'and the JS sends exactly that directive',
+    false !== strpos( file_get_contents( __DIR__ . '/../assets/js/bssec-admin.js' ), "'effective-directive': '" . Bssec_Csp_Reports::TEST_DIRECTIVE . "'" ) );
+
 echo "\n== every refusal has words on the screen ==\n";
 $labels = Bssec_Csp_Reports::drop_labels();
 it( 'every drop reason has a label',

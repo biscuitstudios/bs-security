@@ -354,6 +354,27 @@
 
 .bssec-muted { color: var(--bssec-text-muted); }
 
+/* CSP reports ------------------------------------------------------------- */
+
+/* A source reported once: shown, but not to be trusted on its own. */
+.bssec-table tr.is-faint th code,
+.bssec-table tr.is-faint td,
+.bssec-table tr.is-faint td code { color: var(--bssec-text-muted); }
+
+.bssec-reports td:nth-child(3) { white-space: nowrap; text-align: right; }
+
+.bssec-warn { color: var(--bssec-warning); }
+
+.bssec-report-only-test,
+.bssec-report-only-clear {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin: 16px 0 0;
+}
+.bssec-report-only-status .bssec-notice { margin: 0 0 12px; }
+
 .bssec-tag {
     display: inline-block;
     margin-left: 6px;

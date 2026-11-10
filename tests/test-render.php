@@ -50,24 +50,38 @@ function get_transient( $k )          { return $GLOBALS['transients'][ $k ] ?? f
 function get_option( $k, $d = false ) { return $GLOBALS['options'][ $k ] ?? $d; }
 function rest_url( $p = '' )          { return 'https://example.test/wp-json/' . ltrim( $p, '/' ); }
 function wp_timezone()                { return new DateTimeZone( 'America/New_York' ); }
+function wp_create_nonce( $a )        { return 'stubnonce'; }
+function absint( $v )                 { return abs( (int) $v ); }
+function wp_next_scheduled( $h )      { return $GLOBALS['next_scheduled'] ?? false; }
+define( 'ARRAY_A', 'ARRAY_A' );
+define( 'HOUR_IN_SECONDS', 3600 );
 
 /**
- * Just enough $wpdb for Bssec_Csp_Reports::summary() to run. It answers the
- * three queries that method makes from canned values; it proves the view
- * renders each state, not that the SQL is right. The SQL was run against
- * Local's MySQL (docs/NOTES.md, "Build order", step 2).
+ * Just enough $wpdb for the report card to render. It answers the queries
+ * summary() and rows() make from canned values; it proves the view renders
+ * each state, not that the SQL is right. The SQL was run against Local's
+ * MySQL (docs/NOTES.md, "Build order", steps 2 and 4).
+ *
+ * Starts with no table, which is what a fresh install has.
  */
 class Fake_Wpdb {
-    public $prefix = 'wp_';
-    public $table  = true;
-    public $rows   = 0;
-    public $last   = null;
+    public $prefix    = 'wp_';
+    public $table     = false;
+    public $count     = 0;
+    public $last      = null;
+    public $test_last = null;
+    public $rows      = [];
     public function esc_like( $t ) { return $t; }
     public function prepare( $q, ...$a ) { return vsprintf( str_replace( '%s', "'%s'", $q ), $a ); }
     public function get_var( $q ) {
         if ( 0 === strpos( $q, 'SHOW TABLES' ) ) return $this->table ? 'wp_bssec_csp_reports' : null;
-        if ( false !== strpos( $q, 'COUNT(*)' ) )  return (string) $this->rows;
-        if ( false !== strpos( $q, 'MAX(last_seen)' ) ) return $this->last;
+        if ( false !== strpos( $q, 'COUNT(*)' ) )  return (string) $this->count;
+        if ( false !== strpos( $q, 'MAX(last_seen)' ) && false !== strpos( $q, 'directive = ' ) )  return $this->test_last;
+        if ( false !== strpos( $q, 'MAX(last_seen)' ) && false !== strpos( $q, 'directive <> ' ) ) return $this->last;
+        throw new RuntimeException( "Fake_Wpdb was asked something it does not know: $q" );
+    }
+    public function get_results( $q, $out = null ) {
+        if ( false !== strpos( $q, 'ORDER BY hits DESC' ) ) return $this->rows;
         throw new RuntimeException( "Fake_Wpdb was asked something it does not know: $q" );
     }
 }
@@ -301,7 +315,9 @@ $ro     = array_merge( Bssec_Plugin::defaults(), [
     'csp_report_only_until' => $future,
 ] );
 
-$GLOBALS['wpdb']->rows = 7;
+$GLOBALS['wpdb']->table = true;
+$GLOBALS['wpdb']->count = 7;
+$GLOBALS['next_scheduled'] = time() + 3600;
 $GLOBALS['wpdb']->last = gmdate( 'Y-m-d H:i:s', time() - 300 );
 // Smaller count first on purpose, so the "largest first" check below can fail.
 $GLOBALS['options']['bssec_csp_stats'] = [ 'since' => '2026-11-09 12:00:00', 'dropped' => [ 'over_budget' => 1, 'wrong_host' => 2, 'not_a_reason' => 9 ] ];
@@ -330,7 +346,7 @@ it( 'collecting: the preview shows the report-only header with our address',
 it( 'collecting: the preview shows Reporting-Endpoints',
     false !== strpos( $pre_ro, 'Reporting-Endpoints: bssec=&quot;https://example.test/wp-json/bssec/v1/csp-report&quot;' ) );
 
-$GLOBALS['wpdb']->rows = 0;
+$GLOBALS['wpdb']->count = 0;
 $GLOBALS['wpdb']->last = null;
 $GLOBALS['options']    = [];
 $card0 = report_only_card( render( $ro ) );
@@ -357,10 +373,128 @@ it( 'a candidate carrying markup cannot escape its textarea',
     && substr_count( $h_ro_xss, '<textarea' ) === substr_count( $h_ro_xss, '</textarea>' )
     && false !== strpos( $h_ro_xss, '&quot;&gt;&lt;/textarea&gt;&lt;script&gt;alert(2)' ) );
 
+echo "\n== the report table (step 4) ==\n";
+
+$now_utc = fn( int $ago ) => gmdate( 'Y-m-d H:i:s', time() - $ago );
+$GLOBALS['wpdb']->table     = true;
+$GLOBALS['wpdb']->count     = 3;
+$GLOBALS['wpdb']->last      = $now_utc( 120 );
+$GLOBALS['wpdb']->test_last = $now_utc( 30 );
+$GLOBALS['wpdb']->rows      = [
+    // As $wpdb hands them back: every value a string.
+    [ 'directive' => 'img-src', 'blocked' => 'https://example.test', 'sample_page' => 'https://example.test/work/', 'sample_source' => '', 'hits' => '1240', 'first_seen' => '2026-11-09 18:00:00', 'last_seen' => $now_utc( 120 ) ],
+    [ 'directive' => 'bssec-test', 'blocked' => 'https://example.test', 'sample_page' => 'https://example.test/', 'sample_source' => '', 'hits' => '2', 'first_seen' => '2026-11-10 12:00:00', 'last_seen' => $now_utc( 30 ) ],
+    [ 'directive' => 'script-src-elem', 'blocked' => 'https://evil.test', 'sample_page' => 'https://example.test/<script>alert(3)</script>/', 'sample_source' => '', 'hits' => '1', 'first_seen' => '2026-11-10 09:00:00', 'last_seen' => $now_utc( 600 ) ],
+];
+$GLOBALS['next_scheduled'] = time() + 3600;
+
+$h4    = render( $ro );
+$card4 = report_only_card( $h4 );
+it( 'the table rendered', false !== strpos( $card4, 'class="bssec-table bssec-reports"' ) );
+it( 'it has a row per real source, and the test report is not one of them',
+    2 === substr_count( $card4, '<tr class="' ) && false === strpos( $card4, '<code>bssec-test</code>' ) );
+it( 'the most reported source comes first, with its count formatted',
+    (bool) preg_match( '#<code>img-src</code>.*?1,240.*?<code>script-src-elem</code>#s', $card4 ) );
+it( 'first seen is a day in words', false !== strpos( $card4, 'November 9, 2026' ) );
+it( 'last seen is a time ago', false !== strpos( $card4, '2 minutes ago' ) );
+it( 'a source reported once is greyed',
+    (bool) preg_match( '#<tr class="is-faint">\s*<th scope="row"><code>script-src-elem</code>#', $card4 ) );
+it( 'a source reported many times is not',
+    (bool) preg_match( '#<tr class="">\s*<th scope="row"><code>img-src</code>#', $card4 ) );
+it( 'the greyed rows are explained', false !== strpos( $card4, 'a source reported only once is not evidence' ) );
+it( 'a stored value carrying markup is escaped, not run',
+    false === strpos( $h4, '<script>alert(3)' ) && false !== strpos( $card4, '&lt;script&gt;alert(3)' ) );
+it( 'the test report has its own line', false !== strpos( $card4, 'Last test report 2 minutes ago.' ) );
+
+echo "\n== the test button ==\n";
+it( 'is offered while collecting', false !== strpos( $card4, 'Send a test report' ) );
+it( 'carries the report address',
+    false !== strpos( $card4, 'data-bssec-test-url="https://example.test/wp-json/bssec/v1/csp-report"' ) );
+it( 'and a page on this site, so the host check passes',
+    false !== strpos( $card4, 'data-bssec-test-page="https://example.test/"' ) );
+it( 'is a plain button, so it can never submit the settings form',
+    (bool) preg_match( '#<button type="button" class="button"\s+data-bssec-test-url#', $card4 ) );
+it( 'has a place for its answer that screen readers announce',
+    false !== strpos( $card4, 'id="bssec-test-result" role="status" aria-live="polite" hidden' ) );
+it( 'is not offered once collection has ended',
+    false === strpos( report_only_card( render( $ended ) ), 'Send a test report' ) );
+
+$_GET['bssec-tested'] = '1';
+it( 'after a test, a report stored in the last two minutes reads as stored',
+    false !== strpos( report_only_card( render( $ro ) ), 'Test report received and stored.' ) );
+$GLOBALS['wpdb']->rows[1]['last_seen'] = $now_utc( 900 );
+it( 'after a test, an old test row reads as not stored',
+    false !== strpos( report_only_card( render( $ro ) ), 'accepted the test report but did not store it' ) );
+unset( $_GET['bssec-tested'] );
+$GLOBALS['wpdb']->rows[1]['last_seen'] = $now_utc( 30 );
+
+echo "\n== Clear reports ==\n";
+it( 'the button submits its own form, not the settings form',
+    (bool) preg_match( '#<button type="submit" form="bssec-clear-form" class="button" data-bssec-clear>#', $card4 ) );
+it( 'that form exists, outside the settings form, posting the clear action',
+    (bool) preg_match( '#</form>\s*.*?<form id="bssec-clear-form" method="post" action="https://example.test/wp-admin/admin-post.php">\s*<input type="hidden" name="action" value="bssec_clear_reports">#s', $h4 ) );
+it( 'with a nonce for that action',
+    false !== strpos( $h4, '<input type="hidden" name="_wpnonce" value="stubnonce">' ) );
+$_GET['bssec-cleared'] = '12';
+it( 'after clearing, says how many and that counts restart',
+    false !== strpos( render( $ro ), 'CSP reports cleared: 12 rows deleted. The refused counts start again from now.' ) );
+// The case Local caught: off, and nothing left after the clear. The card has
+// nothing to show, and the first version put the message inside it.
+$GLOBALS['wpdb']->rows  = [];
+$GLOBALS['wpdb']->count = 0;
+$GLOBALS['options']     = [];
+it( 'the message still shows when the clear left nothing and collection is off',
+    false !== strpos( render( array_merge( $ro, [ 'csp_report_only' => false ] ) ), 'CSP reports cleared: 12 rows deleted.' ) );
+unset( $_GET['bssec-cleared'] );
+$GLOBALS['wpdb']->rows = [
+    [ 'directive' => 'img-src', 'blocked' => 'https://example.test', 'sample_page' => 'https://example.test/work/', 'sample_source' => '', 'hits' => '1240', 'first_seen' => '2026-11-09 18:00:00', 'last_seen' => $now_utc( 120 ) ],
+];
+
+echo "\n== switched off, with reports kept ==\n";
+$off_kept = array_merge( $ro, [ 'csp_report_only' => false ] );
+$card_off = report_only_card( render( $off_kept ) );
+it( 'the table still shows', false !== strpos( $card_off, 'class="bssec-table bssec-reports"' ) );
+it( 'and says collection is off', false !== strpos( $card_off, 'Collection is off. The reports below were collected earlier.' ) );
+it( 'Clear is still offered', false !== strpos( $card_off, 'data-bssec-clear' ) );
+it( 'no test button', false === strpos( $card_off, 'Send a test report' ) );
+it( 'no clean-up warning while off', false === strpos( $card_off, 'daily clean-up' ) );
+
+echo "\n== the clean-up canary ==\n";
+$GLOBALS['next_scheduled'] = false;
+it( 'not scheduled while collecting: says so',
+    false !== strpos( report_only_card( render( $ro ) ), 'The daily clean-up is not scheduled.' ) );
+$GLOBALS['next_scheduled'] = time() - 2 * 86400;
+it( 'two days overdue: says so, and that the cap still holds',
+    (bool) preg_match( '#overdue by 2 minutes, so WP-Cron may not be running.*?500-row limit still holds#s', report_only_card( render( $ro ) ) ) );
+$GLOBALS['next_scheduled'] = time() - 600;
+it( 'ten minutes late is not a warning (WP-Cron runs on traffic)',
+    false === strpos( report_only_card( render( $ro ) ), 'overdue' ) );
+$GLOBALS['next_scheduled'] = time() + 3600;
+it( 'scheduled ahead: no warning', false === strpos( report_only_card( render( $ro ) ), 'daily clean-up' ) );
+
+echo "\n== a fresh install shows none of it ==\n";
+$GLOBALS['wpdb'] = new Fake_Wpdb();
+$GLOBALS['options'] = [];
+$card_fresh = report_only_card( render( Bssec_Plugin::defaults() ) );
+it( 'no status block, no table, no Clear',
+    false === strpos( $card_fresh, 'bssec-report-only-status' ) && false === strpos( $card_fresh, 'data-bssec-clear' ) );
+
 $_GET['bssec-notice'] = 'noreportonly';
 it( 'the empty-candidate notice renders',
     false !== strpos( render( Bssec_Plugin::defaults() ), 'Report-only was left off' ) );
 unset( $_GET['bssec-notice'] );
+
+echo "\n== the Settings menu entry ==\n";
+// "Biscuit Security" since 0.4.0, Jason's call on November 10, 2026. The slug
+// is an identifier and must not move with the label.
+function add_options_page( ...$args ) { $GLOBALS['options_page'] = $args; return 'hook'; }
+( new Bssec_Admin() )->register_menu();
+it( 'the menu label is Biscuit Security', 'Biscuit Security' === ( $GLOBALS['options_page'][1] ?? '' ) );
+it( 'and so is the browser tab title', 'Biscuit Security' === ( $GLOBALS['options_page'][0] ?? '' ) );
+it( 'the page slug is unchanged', 'bssec-security' === ( $GLOBALS['options_page'][3] ?? '' ) );
+it( 'and still behind manage_options', 'manage_options' === ( $GLOBALS['options_page'][2] ?? '' ) );
+it( 'the screen heading matches the menu',
+    (bool) preg_match( '#<div class="bssec-header">\s*<h1>Biscuit Security</h1>#', $html ) );
 
 echo "\n== the local development warning ==\n";
 

@@ -4,7 +4,7 @@ Tags: security, security headers, hardening, user enumeration, login
 Requires at least: 6.3
 Tested up to: 7.1
 Requires PHP: 8.2
-Stable tag: 0.3.2
+Stable tag: 0.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -28,6 +28,28 @@ Replacing Biscuit Security Headers: activate this plugin first, so it copies the
 old header settings, then deactivate and delete Biscuit Security Headers.
 
 == Changelog ==
+
+= 0.4.0 =
+* New: the collected CSP reports are listed on the settings screen: one row
+  per directive and blocked source, with how many reports, when it was first
+  and last seen, and a sample page. Most reported first. A source reported
+  only once is greyed, because anyone can send a report. The list stays
+  after collection is switched off or ends.
+* New: "Send a test report". Sends one report the way a visitor's browser
+  does, with no login, and says whether it got through and was stored, or
+  what stopped it: collection off, a REST API lockdown, or a firewall.
+* New: "Clear reports" deletes every collected report and restarts the
+  refused counts.
+* New: a warning if the daily clean-up of old reports stops running.
+* Change: update offers now carry "Tested up to" and a one-line upgrade
+  notice that says whether the release changes the headers this plugin
+  sends. Both were empty before, so an update report could see that the
+  version changed but not what changed. Starts with this release.
+* Change: the Settings menu entry and the screen's heading are now
+  "Biscuit Security", not "Security", so they cannot be mistaken for another
+  plugin's.
+* Fix: update-check failures are logged as [BSSEC], this plugin's tag. They
+  were logged as [BSM], so searching a PHP log for [BSSEC] missed them.
 
 = 0.3.2 =
 * Fix: CSP reports from Safari were all refused as unreadable. Safari sends
@@ -159,3 +181,8 @@ old header settings, then deactivate and delete Biscuit Security Headers.
 * Note: X-XSS-Protection and Expect-CT are not implemented. Both are dead, and
   the filter the first one enabled was itself an attack vector. The check screen
   reports them if something else on the site is still sending them.
+
+== Upgrade Notice ==
+
+= 0.4.0 =
+Headers: unchanged. Adds a list of collected CSP reports, a test report button and Clear reports to Settings > Biscuit Security. Nothing changes on a site that has never switched CSP report-only on.

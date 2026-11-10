@@ -16,6 +16,7 @@ class Bssec_Admin {
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue' ] );
         add_action( 'admin_post_' . Bssec_Plugin::SAVE_ACTION, [ $this, 'handle_save' ] );
         add_action( 'admin_post_' . Bssec_Plugin::PROBE_ACTION, [ $this, 'handle_probe' ] );
+        add_action( 'admin_post_' . Bssec_Plugin::CLEAR_ACTION, [ $this, 'handle_clear' ] );
         add_filter( 'plugin_action_links_' . BSSEC_BASENAME, [ $this, 'action_links' ] );
         add_action( 'admin_notices', [ $this, 'legacy_notice' ] );
     }
@@ -38,7 +39,7 @@ class Bssec_Admin {
             '<div class="notice notice-warning"><p>%1$s <a href="%2$s">%3$s</a> %4$s <a href="%5$s">%6$s</a></p></div>',
             esc_html__( 'Biscuit Security replaces Biscuit Security Headers, which is still active.', 'bs-security' ),
             esc_url( admin_url( 'options-general.php?page=' . self::SLUG ) ),
-            esc_html__( 'Check Settings → Security,', 'bs-security' ),
+            esc_html__( 'Check Settings → Biscuit Security,', 'bs-security' ),
             esc_html__( 'then deactivate and delete Biscuit Security Headers on the', 'bs-security' ),
             esc_url( admin_url( 'plugins.php' ) ),
             esc_html__( 'Plugins screen.', 'bs-security' )
@@ -50,11 +51,15 @@ class Bssec_Admin {
      *
      * This is configured once and then left alone, which is what Settings is
      * for, and it puts the screen in the same place WP Force SSL used.
+     *
+     * "Biscuit Security" rather than "Security" since 0.4.0, Jason's call on
+     * November 10, 2026: under Settings, a bare "Security" could be any
+     * plugin's. The page slug, bssec-security, is an identifier and stays.
      */
     public function register_menu(): void {
         add_options_page(
-            __( 'Security', 'bs-security' ),
-            __( 'Security', 'bs-security' ),
+            __( 'Biscuit Security', 'bs-security' ),
+            __( 'Biscuit Security', 'bs-security' ),
             Bssec_Plugin::CAPABILITY,
             self::SLUG,
             [ $this, 'render_page' ]
@@ -89,6 +94,20 @@ class Bssec_Admin {
                 "Switching HSTS on cannot be fully undone.\n\nBrowsers that see it will refuse to load this site over an insecure connection for as long as the duration you chose, and there is no way to tell them to forget sooner.\n\nStart with 5 minutes unless you have already run this site at a shorter duration without trouble.",
                 'bs-security'
             ),
+            'clearConfirm' => __(
+                "Delete every collected report and restart the refused counts?\n\nThis cannot be undone. Collection carries on if it is switched on.",
+                'bs-security'
+            ),
+            // The test report's outcome, by what the report address answered.
+            // A 204 reloads the page instead, and the screen then says whether
+            // the report was actually stored, which a 204 alone cannot.
+            'testSending' => __( 'Sending a test report…', 'bs-security' ),
+            'test404'     => __( 'The report address answered 404, so nothing is listening there: collection is switched off or past its end date. Save the settings above with collection on, then try again.', 'bs-security' ),
+            'test401'     => __( 'Refused with 401. Something is locking the REST API for logged-out visitors. This plugin adds its report address to Perfmatters\' exceptions; another plugin or a host rule may be doing the same thing.', 'bs-security' ),
+            'test403cf'   => __( 'Cloudflare challenged the report, so browsers\' reports are being stopped before they reach WordPress. Ask the host whether the report address can be exempted.', 'bs-security' ),
+            'test403'     => __( 'Refused with 403 by the server or a firewall before it reached this plugin.', 'bs-security' ),
+            'testOther'   => __( 'The report address answered with status %s, which it never sends for a test report.', 'bs-security' ),
+            'testNetwork' => __( 'The test report did not reach the site at all: %s', 'bs-security' ),
         ] );
     }
 
@@ -180,6 +199,25 @@ class Bssec_Admin {
             [ 'page' => self::SLUG, 'bssec-checked' => '1' ],
             admin_url( 'options-general.php' )
         ) . '#bssec-server-check' );
+        exit;
+    }
+
+    /**
+     * Delete the collected CSP reports and restart the refused counts.
+     *
+     * The only write on the screen besides Save, and behind the same guard.
+     * A POST from its own form, placed outside the settings form because
+     * forms cannot nest; the button sits in the card and names the form.
+     */
+    public function handle_clear(): void {
+        $this->guard_post( Bssec_Plugin::CLEAR_ACTION, 'clear', 5 );
+
+        $removed = Bssec_Csp_Reports::clear();
+
+        wp_safe_redirect( add_query_arg(
+            [ 'page' => self::SLUG, 'bssec-cleared' => (string) $removed ],
+            admin_url( 'options-general.php' )
+        ) . '#bssec-report-only' );
         exit;
     }
 

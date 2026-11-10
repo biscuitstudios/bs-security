@@ -37,13 +37,18 @@ wrong: a policy that misses one script source breaks that script quietly. The
 report-only mode is how to find out what a policy would break before it is
 enforced.
 
-Switch it on under **Settings → Security**, paste a candidate policy, and the
+Switch it on under **Settings → Biscuit Security**, paste a candidate policy, and the
 plugin sends it as `Content-Security-Policy-Report-Only`. Visitors' browsers
 block nothing. They report what they would have blocked to
 `/wp-json/bssec/v1/csp-report`, and the plugin folds those reports into one row
 per directive and blocked site, with a count. After a few weeks of normal
 traffic, the real policy is written from that list.
 
+- **The reports are listed on the settings screen**, most reported first,
+  with a count, first and last seen, and a sample page. **Send a test
+  report** sends one the way a visitor's browser would, with no login, and
+  says whether it got through. **Clear reports** empties the list and
+  restarts the refused counts.
 - **It is separate from the enforced policy**, so a site can run a loose
   enforced policy and a strict candidate side by side.
 - **It reaches WooCommerce's Checkout and My Account pages.** WooCommerce
@@ -160,7 +165,7 @@ better. This plugin is the portable version that behaves the same everywhere.
 
 Download the zip from
 [Releases](https://github.com/biscuitstudios/bs-security/releases), then
-**Plugins → Add New → Upload Plugin**. Settings live under **Settings → Security**.
+**Plugins → Add New → Upload Plugin**. Settings live under **Settings → Biscuit Security**.
 
 **Replacing Biscuit Security Headers:** activate this plugin first. On its first
 activation it copies the old plugin's header settings. Then deactivate and delete

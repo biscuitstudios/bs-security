@@ -38,6 +38,7 @@ jobs:
           php tests/test-render.php
           php tests/test-hardening.php
           php tests/test-csp-reports.php
+          php tests/test-updater.php
 
   standards:
     name: Coding standards

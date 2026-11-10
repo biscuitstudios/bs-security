@@ -14,6 +14,7 @@ final class Bssec_Plugin {
     public const OPTION       = 'bssec_settings';
     public const SAVE_ACTION  = 'bssec_save_settings';
     public const PROBE_ACTION = 'bssec_probe_server';
+    public const CLEAR_ACTION = 'bssec_clear_reports';
 
     /**
      * Referrer-Policy values offered, strictest last.
